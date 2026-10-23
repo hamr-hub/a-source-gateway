@@ -148,9 +148,10 @@ jobs:
           # 从 CHANGELOG.md 提取当前 tag 对应的小节(到下一个同级 ## 标题为止),
           # 不能用 '/^## /,$p' —— 那会把 [未发布] 整段当成发布说明。
           python3 - <<'PY' > RELEASE_NOTES.md
+          import os
           import re
-          tag = "${GITHUB_REF_NAME}"          # e.g. v1.0.1
-          ver = tag.lstrip("v")              # e.g. 1.0.1
+          tag = os.environ["GITHUB_REF_NAME"]   # e.g. v1.0.1
+          ver = tag.lstrip("v")                 # e.g. 1.0.1
           text = open("CHANGELOG.md", encoding="utf-8").read()
           sections = re.split(r"(?=^## )", text, flags=re.M)
           body = None
