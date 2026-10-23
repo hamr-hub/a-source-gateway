@@ -260,14 +260,92 @@ func TestRenderFillsEmailFromContact(t *testing.T) {
 
 func TestRenderMissingRequiredParam(t *testing.T) {
 	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
-	ep := endpointOf(t, r, "crossref", "works")
-	_, err := r.Render(ep, QueryRequest{Source: "crossref", Endpoint: "works",
-		Params: params()}, 25)
+	ep := &registry.EndpointSpec{
+		ID:          "x",
+		Method:      "GET",
+		URLTemplate: "https://example.org/?q={needed}",
+		Params: []registry.ParamSpec{
+			{Name: "needed", In: "query", Type: "string", Required: true},
+		},
+	}
+	_, err := r.Render(ep, QueryRequest{Source: "x", Endpoint: "x", Params: params()}, 25)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
 	if _, ok := err.(*MissingParamError); !ok {
 		t.Errorf("error = %T, want *MissingParamError", err)
+	}
+}
+
+// A required parameter falls back to the example the endpoint declares:
+// that example is the answer to "how do I call this endpoint". Without it
+// a plain params:{} call could not reach most of the endpoints.
+func TestRenderFallsBackToExampleForRequiredParam(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
+	ep := endpointOf(t, r, "crossref", "works")
+	url, err := r.Render(ep, QueryRequest{Source: "crossref", Endpoint: "works",
+		Params: params()}, 25)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(url, "filter=from-index-date") {
+		t.Errorf("url = %q, want the example filter", url)
+	}
+}
+
+// The credential precedence is: caller value > environment variable >
+// default the endpoint declares.
+func TestRenderCredentialPrecedence(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
+	ep := &registry.EndpointSpec{
+		ID:          "x",
+		Method:      "GET",
+		URLTemplate: "https://example.org/?k={api_key}",
+		Params: []registry.ParamSpec{
+			{Name: "api_key", In: "query", Type: "string", Default: "DEFAULT_KEY", Env: "A_GATEWAY_TEST_KEY"},
+		},
+	}
+	url, err := r.Render(ep, QueryRequest{Source: "x", Endpoint: "x", Params: params()}, 25)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(url, "k=DEFAULT_KEY") {
+		t.Errorf("url = %q, want the declared default", url)
+	}
+
+	t.Setenv("A_GATEWAY_TEST_KEY", "ENV_KEY")
+	url, err = r.Render(ep, QueryRequest{Source: "x", Endpoint: "x", Params: params()}, 25)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(url, "k=ENV_KEY") {
+		t.Errorf("url = %q, want the environment value", url)
+	}
+
+	p := parser.NewObject()
+	p.Set("api_key", "CALLER_KEY")
+	url, err = r.Render(ep, QueryRequest{Source: "x", Endpoint: "x", Params: p}, 25)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(url, "k=CALLER_KEY") {
+		t.Errorf("url = %q, want the caller value", url)
+	}
+}
+
+// A header whose value references an environment variable that is not set is
+// dropped: a half filled credential is worse than no header at all.
+func TestExpandEnvRefDropsHeaderWhenTheVariableIsUnset(t *testing.T) {
+	if _, keep := expandEnvRef("Bearer ${A_GATEWAY_TEST_MISSING_TOKEN}"); keep {
+		t.Error("a header with an unset variable must be dropped")
+	}
+	if _, keep := expandEnvRef("Bearer ${A_GATEWAY_TEST_MISSING_TOKEN} "); keep {
+		t.Error("a header with an unset variable must be dropped")
+	}
+	t.Setenv("A_GATEWAY_TEST_TOKEN", "tok")
+	got, keep := expandEnvRef("Bearer ${A_GATEWAY_TEST_TOKEN}")
+	if !keep || got != "Bearer tok" {
+		t.Errorf("expandEnvRef = %q, %v; want \"Bearer tok\", true", got, keep)
 	}
 }
 

@@ -120,13 +120,17 @@
             "name": "startdt",
             "in": "query",
             "type": "string",
-            "example": "2026-10-01"
+            "example": "2026-10-01",
+            "default": "2026-10-01",
+            "desc": "(默认取示例窗口; 留空会让上游命中数退化成 10000 上限)"
           },
           {
             "name": "enddt",
             "in": "query",
             "type": "string",
-            "example": "2026-10-21"
+            "example": "2026-10-21",
+            "default": "2026-10-21",
+            "desc": "(默认取示例窗口; 留空会让上游命中数退化成 10000 上限)"
           }
         ],
         "response": {
@@ -144,7 +148,8 @@
               "type": "int",
               "desc": "命中总数"
             }
-          ]
+          ],
+          "notes": "。实测不传日期时上游 hits.total.value=10000(relation=gte, 命中数被截断); 带日期窗口实测 1806 条"
         },
         "cache_ttl_s": 1800
       }
@@ -189,7 +194,10 @@
             }
           ]
         },
-        "cache_ttl_s": 86400
+        "cache_ttl_s": 86400,
+        "headers": {
+          "Authorization": "${A_GATEWAY_COMPANIES_HOUSE_AUTH}"
+        }
       },
       {
         "id": "filing_history",
@@ -225,7 +233,10 @@
             }
           ]
         },
-        "cache_ttl_s": 3600
+        "cache_ttl_s": 3600,
+        "headers": {
+          "Authorization": "${A_GATEWAY_COMPANIES_HOUSE_AUTH}"
+        }
       }
     ],
     "GLEIF LEI": [
@@ -262,7 +273,7 @@
               "type": "int"
             }
           ],
-          "notes": "实测 3469322 条"
+          "notes": "实测 3469322 条。实测 GLEIF v1 REST 只有 lei-records 一个集合端点: /api/v1/relationship-records 实测 404, 逐条 /lei-records/{lei}/direct-parent 也 404(关系链接存在于每条记录的 relationships 里, related 资源不开放); 批量母子关系须用 GLEIF 的 LEI Relationship 批量文件"
         },
         "cache_ttl_s": 3600
       },
@@ -298,38 +309,10 @@
               "name": "data.relationships.ultimateParent",
               "type": "object"
             }
-          ]
+          ],
+          "notes": "实测 GLEIF v1 REST 只有 lei-records 一个集合端点: /api/v1/relationship-records 实测 404, 逐条 /lei-records/{lei}/direct-parent 也 404(关系链接存在于每条记录的 relationships 里, related 资源不开放); 批量母子关系须用 GLEIF 的 LEI Relationship 批量文件"
         },
         "cache_ttl_s": 86400
-      },
-      {
-        "id": "relationship_records",
-        "name": "母子关系",
-        "url_template": "https://api.gleif.org/api/v1/relationship-records?page%5Bsize%5D={size}",
-        "params": [
-          {
-            "name": "size",
-            "in": "query",
-            "type": "int",
-            "default": 10
-          }
-        ],
-        "response": {
-          "shape": "object",
-          "item_path": "data",
-          "total_field": "meta.pagination.total",
-          "fields": [
-            {
-              "name": "data",
-              "type": "array"
-            },
-            {
-              "name": "data.attributes",
-              "type": "object"
-            }
-          ]
-        },
-        "cache_ttl_s": 3600
       }
     ],
     "OFAC SDN": [
@@ -363,7 +346,7 @@
               "desc": "证件号"
             }
           ],
-          "notes": "29.2MB;网关只做摘要不整体透传"
+          "notes": "29.2MB;网关只做摘要不整体透传。实测官方 publicationpreview 地址会 302 到带签名的 S3 链接(有效期 1 小时, 路径含日期与 UUID), 没法用固定模板表达; 网关按 SSRF 防护不跟随跨主机跳转 —— 这类文件请按 fallback 直连官方地址"
         },
         "cache_ttl_s": 3600
       },
@@ -400,7 +383,8 @@
               "name": "ids",
               "type": "string"
             }
-          ]
+          ],
+          "notes": "实测官方 publicationpreview 地址会 302 到带签名的 S3 链接(有效期 1 小时, 路径含日期与 UUID), 没法用固定模板表达; 网关按 SSRF 防护不跟随跨主机跳转 —— 这类文件请按 fallback 直连官方地址"
         },
         "cache_ttl_s": 3600
       }
@@ -1430,7 +1414,8 @@
               "type": "string"
             }
           ],
-          "notes": "实测 3,102 个指标(上游 @odata.count=3102)。带 $count=true 才有总数; 但 @odata.count 这个键本身带点, 网关的点号路径取不到, 故不声明 total_field (meta.total 回落到本页条数); 真实总数见清单「实测规模」列"
+          "notes": "实测 3,102 个指标; OData 默认不返回 @odata.count, 带 $count=true 才有; 该键名本身带点, 网关的点号路径已支持整串字面键兜底",
+          "total_field": "@odata.count"
         },
         "cache_ttl_s": 86400
       }
@@ -1522,7 +1507,10 @@
           ]
         },
         "cache_ttl_s": 3600,
-        "notes": "API v3/v4 均需认证(401)"
+        "notes": "API v3/v4 均需认证(401)",
+        "headers": {
+          "Authorization": "Token ${A_GATEWAY_COURTLISTENER_TOKEN}"
+        }
       }
     ],
     "US Census International Trade API": [
@@ -1538,7 +1526,8 @@
             "type": "string",
             "required": false,
             "example": "",
-            "desc": "免费 key;小流量可不带"
+            "desc": "免费 key;小流量可不带",
+            "env": "A_GATEWAY_CENSUS_API_KEY"
           }
         ],
         "response": {
@@ -1642,7 +1631,10 @@
           ]
         },
         "cache_ttl_s": 3600,
-        "notes": "需认证(401)"
+        "notes": "需认证(401)",
+        "headers": {
+          "Ocp-Apim-Subscription-Key": "${A_GATEWAY_WORLDBANK_KEY}"
+        }
       }
     ],
     "Wikidata / Wikimedia dumps": [
@@ -1840,7 +1832,8 @@
             "type": "string",
             "required": false,
             "default": "DEMO_KEY",
-            "desc": "api.congress.gov 免费 key;官方 DEMO_KEY 可直接用(实测返回真实议案列表)"
+            "desc": "api.congress.gov 免费 key;官方 DEMO_KEY 可直接用(实测返回真实议案列表)",
+            "env": "A_GATEWAY_CONGRESS_API_KEY"
           }
         ],
         "response": {
@@ -1905,7 +1898,7 @@
         "id": "institutions",
         "name": "受监管机构列表",
         "method": "GET",
-        "url_template": "https://banks.data.fdic.gov/api/institutions?limit={size}&offset={offset}",
+        "url_template": "https://api.fdic.gov/banks/institutions?limit={size}&offset={offset}&fields={fields}",
         "page_size": 100,
         "params": [
           {
@@ -1967,7 +1960,7 @@
               "desc": "是否在营"
             }
           ],
-          "notes": "实测 27835 家;搜索型端点的 data[] 元素会被包成 {data:{...},score:...}"
+          "notes": "实测 banks.data.fdic.gov/api/institutions 已 301 跳到 api.fdic.gov/banks/institutions(跨主机, 网关按 SSRF 防护不跟随), 故模板直接指向终 URL; 单次实测约 1.2~3.5s, 冷调用会超时, 预热后可命中缓存"
         },
         "cache_ttl_s": 86400
       }
@@ -1994,7 +1987,8 @@
             "type": "string",
             "required": true,
             "example": "DEMO_KEY",
-            "desc": "免费 key;DEMO_KEY 仅供试调"
+            "desc": "免费 key;DEMO_KEY 仅供试调",
+            "env": "A_GATEWAY_EIA_API_KEY"
           },
           {
             "name": "frequency",
@@ -3564,7 +3558,7 @@
         "id": "version_csv",
         "name": "版本数据CSV下载",
         "method": "GET",
-        "url_template": "https://download.ons.gov.uk/downloads/datasets/{dataset_id}/editions/{edition}/versions/{version}.csv",
+        "url_template": "https://static.ons.gov.uk/datasets/{dataset_id}-{edition}-v{version}.csv",
         "params": [
           {
             "name": "dataset_id",
@@ -3595,7 +3589,7 @@
           "media_type": "text/csv",
           "shape": "csv",
           "fields": [],
-          "notes": "整版数据CSV。实测HTTP 200(经301跳转, 终URL https://static.ons.gov.uk/datasets/wellbeing-quarterly-time-series-v9.csv), 265571B, 1960数据行x13列, 表头 v4_2,LCL,UCL,yyyy-qq,Time,uk-only,Geography,measure-of-wellbeing,MeasureOfWellbeing,wellbeing-estimate,Estimate,seasonal-adjustment,SeasonalAdjustment。CSV解析成二维行数组, 无对象字段可声明, 故 fields 为空且不写item_path。版本号会变, 必须按 latest_version 更新。"
+          "notes": "整版数据CSV。官方 API 的 downloads.csv.href 给的是 download.ons.gov.uk/downloads/datasets/{dataset_id}/editions/{edition}/versions/{version}.csv, 该地址实测 301 跳到 static.ons.gov.uk(跨主机跳转, 网关按 SSRF 防护不跟随), 故模板直接指向 static 终 URL(实测 200)"
         },
         "cache_ttl_s": 3600,
         "budget_ms": 10000
@@ -3937,7 +3931,8 @@
             "required": true,
             "type": "string",
             "example": "DEMO_KEY",
-            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册"
+            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册",
+            "env": "A_GATEWAY_REGULATIONS_API_KEY"
           },
           {
             "name": "size",
@@ -4029,7 +4024,8 @@
             "required": true,
             "type": "string",
             "example": "DEMO_KEY",
-            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册"
+            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册",
+            "env": "A_GATEWAY_REGULATIONS_API_KEY"
           },
           {
             "name": "size",
@@ -4102,7 +4098,8 @@
             "required": true,
             "type": "string",
             "example": "DEMO_KEY",
-            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册"
+            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册",
+            "env": "A_GATEWAY_REGULATIONS_API_KEY"
           }
         ],
         "response": {
@@ -4555,7 +4552,8 @@
             "type": "string",
             "example": "DEMO_KEY",
             "desc": "api.data.gov 平台 key。官方文档：注册 key 限额 1,000 次/小时；未注册可用官方 DEMO_KEY(限额更严：30 次/小时、50 次/天)",
-            "default": "DEMO_KEY"
+            "default": "DEMO_KEY",
+            "env": "A_GATEWAY_COLLEGE_SCORECARD_KEY"
           },
           {
             "name": "page",
@@ -4690,7 +4688,8 @@
             "type": "string",
             "example": "DEMO_KEY",
             "desc": "api.data.gov 平台 key，DEMO_KEY 亦可用(限额更严)",
-            "default": "DEMO_KEY"
+            "default": "DEMO_KEY",
+            "env": "A_GATEWAY_COLLEGE_SCORECARD_KEY"
           },
           {
             "name": "fields",
@@ -4756,7 +4755,8 @@
             "type": "string",
             "example": "DEMO_KEY",
             "desc": "api.data.gov 平台 key。官方文档：注册 key 限额 1,000 次/小时；未注册可用官方 DEMO_KEY(限额更严：30 次/小时、50 次/天)",
-            "default": "DEMO_KEY"
+            "default": "DEMO_KEY",
+            "env": "A_GATEWAY_COLLEGE_SCORECARD_KEY"
           },
           {
             "name": "state",
@@ -4820,7 +4820,8 @@
             "required": true,
             "type": "string",
             "example": "YOUR_EDINET_SUBSCRIPTION_KEY",
-            "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖"
+            "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖",
+            "env": "A_GATEWAY_EDINET_SUBSCRIPTION_KEY"
           },
           {
             "name": "date",
@@ -4877,7 +4878,8 @@
             "required": true,
             "type": "string",
             "example": "YOUR_EDINET_SUBSCRIPTION_KEY",
-            "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖"
+            "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖",
+            "env": "A_GATEWAY_EDINET_SUBSCRIPTION_KEY"
           },
           {
             "name": "type",
@@ -5100,7 +5102,8 @@
             "required": true,
             "type": "string",
             "example": "YOUR_CENSUS_API_KEY",
-            "desc": "api.census.gov 免费申请的 API Key,调用时用 params 覆盖"
+            "desc": "api.census.gov 免费申请的 API Key,调用时用 params 覆盖",
+            "env": "A_GATEWAY_CENSUS_API_KEY"
           },
           {
             "name": "year",
@@ -5153,6 +5156,72 @@
           "notes": "官方数据组字典(groups.json);未实测(需 key)"
         },
         "cache_ttl_s": 86400
+      }
+    ],
+    "SEC Form D": [
+      {
+        "id": "form_d_filings",
+        "name": "Form D 申报检索(EDGAR 全文检索 API)",
+        "method": "GET",
+        "url_template": "https://efts.sec.gov/LATEST/search-index?forms=D&startdt={startdt}&enddt={enddt}",
+        "params": [
+          {
+            "name": "startdt",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "2026-10-01",
+            "desc": "申报日窗口起点(YYYY-MM-DD)"
+          },
+          {
+            "name": "enddt",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "2026-10-21",
+            "desc": "申报日窗口终点(YYYY-MM-DD)"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "hits.hits",
+          "total_field": "hits.total.value",
+          "fields": [
+            {
+              "name": "hits.hits",
+              "type": "array",
+              "desc": "命中的 Form D 申报"
+            },
+            {
+              "name": "hits.hits[]._source.form",
+              "type": "string",
+              "desc": "表单类型(D)"
+            },
+            {
+              "name": "hits.hits[]._source.file_date",
+              "type": "string",
+              "desc": "申报日"
+            },
+            {
+              "name": "hits.hits[]._source.adsh",
+              "type": "string",
+              "desc": "受理号"
+            },
+            {
+              "name": "hits.hits[]._source.file_num",
+              "type": "string",
+              "desc": "文件号"
+            },
+            {
+              "name": "hits.hits[]._source.display_names",
+              "type": "array",
+              "desc": "申报主体名"
+            }
+          ],
+          "notes": "实测 2026-10-01~2026-10-21: hits.total.value=4060, 命中 100 条/页; 官方入口 browse-edgar 是给人看的页面(对非浏览器 UA 403), 取数走 EDGAR 全文检索 API"
+        },
+        "cache_ttl_s": 1800
       }
     ]
   }

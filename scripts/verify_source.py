@@ -61,9 +61,18 @@ def resolve_path(payload: Any, path: str) -> Any:
     return node
 
 
-def http_get(url: str, timeout: float, user_agent: str) -> dict[str, Any]:
-    req = urllib.request.Request(url, headers={"User-Agent": user_agent, "Accept": "*/*",
-                                               "Accept-Encoding": "identity"})
+def http_get(url: str, timeout: float, user_agent: str,
+             headers: dict[str, str] | None = None) -> dict[str, Any]:
+    """取一次上游。
+
+    headers 是端点专有请求头(如 Accept: application/json)。**必须带上**:
+    不带就等于换了一个上游请求, 上游可能回另一种结构(ORCID 默认回 XML),
+    于是断言拿到的响应和网关实际拿到的不是一回事, 判出假阴性。
+    """
+    req_headers = {"User-Agent": user_agent, "Accept": "*/*", "Accept-Encoding": "identity"}
+    for k, v in (headers or {}).items():
+        req_headers[k] = v
+    req = urllib.request.Request(url, headers=req_headers)
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -160,6 +169,16 @@ def check_declared_fields(payload: Any, ep: dict, item_path: str | None,
         items = resolve_path(payload, item_path)
     if not isinstance(items, list) and isinstance(payload, list):
         items = payload
+    # 列表套列表时展平一层(与网关 item_flatten 语义一致), 否则取不到条目的键
+    if (resp.get("item_flatten") and isinstance(items, list) and items
+            and isinstance(items[0], list)):
+        flat: list[Any] = []
+        for sub in items:
+            if isinstance(sub, list):
+                flat.extend(sub)
+            else:
+                flat.append(sub)
+        items = flat
     item_keys: set[str] = set()
     if isinstance(items, list) and items and isinstance(items[0], dict):
         item_keys = set(items[0].keys())
@@ -444,7 +463,8 @@ def main(argv: list[str] | None = None) -> int:
             assertions.add("not_degraded", True, "hard", "网关返回未降级")
         # 严格断言用原文: 再取一次网关实际用的那个 URL
         if upstream_url and not args.no_raw_refetch:
-            direct = http_get(upstream_url, timeout=args.timeout, user_agent=ua)
+            direct = http_get(upstream_url, timeout=args.timeout, user_agent=ua,
+                               headers=ep.get("headers") or None)
             if direct["status"] is not None:
                 raw_body = direct["body"]
                 raw_meta = {"status": direct["status"], "url": direct["url"],
@@ -464,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
             emit(report, args.json)
             return 1
         assertions.add("url_renderable", True, "hard", f"渲染出 URL: {upstream_url}")
-        direct = http_get(upstream_url, timeout=args.timeout, user_agent=ua)
+        direct = http_get(upstream_url, timeout=args.timeout, user_agent=ua,
+                               headers=ep.get("headers") or None)
         if direct["status"] is None:
             report = build_report(src, ep, runtime, args, gateway_url, assertions, warnings,
                                   errors, status="unreachable", transport="direct",

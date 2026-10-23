@@ -314,40 +314,59 @@ func Trim(data any, total *int, limit int, fields []string, truncatedIn bool) (a
 	return list, total, truncated
 }
 
+// lookupLiteralKey looks the whole path up as one literal key.
+//
+// Upstream keys do not always follow the dotted convention: OData uses
+// "@odata.count" and "@odata.nextLink", whose names contain a dot. Splitting
+// such a path on "." can never reach the value.
+func lookupLiteralKey(node any, path string) (any, bool) {
+	obj, ok := node.(*Object)
+	if !ok {
+		return nil, false
+	}
+	v, found := obj.Get(path)
+	if !found {
+		return nil, false
+	}
+	return v, true
+}
+
 func lookupTotalPath(node any, path string) (any, bool) {
+	root := node
 	for _, part := range strings.Split(path, ".") {
 		switch t := node.(type) {
 		case *Object:
 			v, ok := t.Get(part)
 			if !ok {
-				return nil, false
+				return lookupLiteralKey(root, path)
 			}
 			node = v
 		case []any:
 			idx, err := parseDigits(part)
 			if err != nil {
-				return nil, false
+				return lookupLiteralKey(root, path)
 			}
 			if idx >= len(t) {
-				return nil, false
+				return lookupLiteralKey(root, path)
 			}
 			node = t[idx]
 		default:
-			return nil, false
+			return lookupLiteralKey(root, path)
 		}
 	}
 	return node, true
 }
 
 func lookupItemPath(node any, path string) (any, bool) {
+	root := node
 	for _, part := range strings.Split(path, ".") {
 		obj, ok := node.(*Object)
 		if !ok {
-			return nil, false
+			return lookupLiteralKey(root, path)
 		}
 		v, ok := obj.Get(part)
 		if !ok {
-			return nil, false
+			return lookupLiteralKey(root, path)
 		}
 		node = v
 	}

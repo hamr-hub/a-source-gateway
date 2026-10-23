@@ -131,16 +131,29 @@ def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
 
 # ── 投影(等价于 Resolver._project) ───────────────────────────────────────
 def _dig(node: Any, path: str) -> Any:
-    """点号路径取值; 列表只支持数字下标(与 resolver 的 total_field 语义一致)。"""
+    """点号路径取值; 列表只支持数字下标(与 resolver 的 total_field 语义一致)。
+
+    点号切分取不到时, 再按整串字面键试一次 —— 上游 OData 的 "@odata.count"
+    这类键名本身带点, 按 "." 切永远取不到它(与 Go parser 的 lookupTotalPath 同语义)。
+    """
+    root = node
     for part in path.split("."):
         if isinstance(node, dict):
-            node = node.get(part)
+            if part not in node:
+                break
+            node = node[part]
         elif isinstance(node, list) and part.isdigit():
             idx = int(part)
-            node = node[idx] if idx < len(node) else None
+            if idx >= len(node):
+                break
+            node = node[idx]
         else:
-            return None
-    return node
+            break
+    else:
+        return node
+    if isinstance(root, dict) and path in root:
+        return root[path]
+    return None
 
 
 def project(payload: Any, *, item_path: str | None = None, total_field: str | None = None,
@@ -161,13 +174,7 @@ def project(payload: Any, *, item_path: str | None = None, total_field: str | No
     if item_shape == "map" and isinstance(payload, dict):
         data = list(payload.values())          # 形如 {"0": {...}, "1": {...}}
     elif item_path and isinstance(payload, dict):
-        node = payload
-        for part in item_path.split("."):
-            if isinstance(node, dict):
-                node = node.get(part)
-            else:
-                node = None
-                break
+        node = _dig(payload, item_path)
         data = node if node is not None else []
 
     truncated = False

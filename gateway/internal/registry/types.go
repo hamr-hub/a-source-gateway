@@ -21,6 +21,7 @@ type ParamSpec struct {
 	Pattern  *string
 	Default  any
 	Example  any
+	Env      string
 }
 
 // ToObject renders the parameter as an ordered object, omitting only the
@@ -43,6 +44,9 @@ func (p ParamSpec) ToObject() *parser.Object {
 	}
 	if p.Example != nil {
 		o.Set("example", p.Example)
+	}
+	if p.Env != "" {
+		o.Set("env", p.Env)
 	}
 	o.Set("in", p.In)
 	return o

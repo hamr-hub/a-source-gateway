@@ -133,7 +133,8 @@
       "name": "filter", "in": "query", "type": "string",
       "required": true, "desc": "created=新增, index=变更(量约 10 倍)",
       "pattern": null, "default": null,
-      "example": "from-index-date:2026-10-21"
+      "example": "from-index-date:2026-10-21",
+      "env": null                      // 凭据从哪个环境变量读(见下)
     }
   ],
   "response": {
@@ -158,6 +159,31 @@
 
 `path` / `query` / `header` / `body`。`path` 表示占位在 URL 路径里。
 
+### 3.1.1 参数取值顺序
+
+调用方没传的参数,网关按这个顺序补:
+
+1. **`params[].env` 指向的环境变量** —— 凭据不进数据文件,数据里只写变量名;
+2. **`params[].default`** —— 端点声明的默认值;
+3. **`params[].example`** —— 只对 `required=true` 的参数兜底。
+
+调用方显式传的值永远优先。必填参数如果三者都没有,才报 `missing_param`。
+
+`example` 对必填参数的作用是**"这个端点怎么调"的答案**:所以
+`{"source":"sec_edgar","endpoint":"submissions","params":{}}` 这样不带参数的调用
+也能取到数据(用端点声明的示例值),而不是报缺参数。
+
+### 3.1.2 请求头里的 `${VAR}`
+
+`headers` 的值里可以写 `${VAR}`,网关在发请求前用环境变量替换:
+
+```jsonc
+"headers": { "Authorization": "Token ${A_GATEWAY_COURTLISTENER_TOKEN}" }
+```
+
+引用了**未设置**的变量时,整个请求头都不发 —— 发一个残缺的凭据
+(只剩 `Bearer `)比不发更糟。
+
 ### 3.2 `response.item_path` 与 `item_shape`
 
 - `item_shape=list`(默认):列表在 `item_path` 指向的位置;
@@ -168,6 +194,29 @@
 
 点号路径,指向**总数**所在字段(通常是整数)。网关把它放进 `meta.total`。
 数组下标也支持(如 `0.total`)。
+
+键名本身带点的情况(OData 的 `@odata.count`)也支持:点号路径取不到时,
+网关会再按**整串字面键**找一次(嵌套路径优先,不会改变已有语义)。
+
+### 3.4 凭据相关的环境变量
+
+数据文件里只写变量名,值由部署时提供。已登记的变量:
+
+| 环境变量 | 用途 |
+|---|---|
+| `A_GATEWAY_CONTACT` | 联系邮箱(拼进 UA;OpenAlex/SEC/Unpaywall 等要求) |
+| `A_GATEWAY_CONGRESS_API_KEY` | Congress.gov 的 api_key |
+| `A_GATEWAY_CENSUS_API_KEY` | Census 的 key |
+| `A_GATEWAY_EIA_API_KEY` | EIA 的 api_key |
+| `A_GATEWAY_REGULATIONS_API_KEY` | Regulations.gov 的 api_key |
+| `A_GATEWAY_COLLEGE_SCORECARD_KEY` | College Scorecard 的 api_key |
+| `A_GATEWAY_EDINET_SUBSCRIPTION_KEY` | EDINET 的 Subscription-Key |
+| `A_GATEWAY_DART_API_KEY` | DART 的 crtfc_key |
+| `A_GATEWAY_WORLDBANK_KEY` | World Bank 的 APIM 订阅密钥(请求头) |
+| `A_GATEWAY_COMPANIES_HOUSE_AUTH` | Companies House 的 Basic 认证头(整串 `Basic ...`) |
+| `A_GATEWAY_COURTLISTENER_TOKEN` | CourtListener 的 Token(请求头用 `Token ${...}`) |
+
+未设置的变量不会让请求失败,端点会退回到声明的默认值(或在缺失时报缺参数)。
 
 ---
 

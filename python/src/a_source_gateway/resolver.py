@@ -13,6 +13,7 @@ import asyncio
 import csv
 import io
 import json
+import os
 import re
 import time
 import urllib.parse
@@ -38,6 +39,36 @@ JSON_LIMIT_BYTES = 4 * 1024 * 1024     # 超过就不整体透传, 走摘要
 MAX_BODY_BYTES = 2 * 1024 * 1024       # 正文上限(运行期由 Config 覆盖)
 MAX_PARSE_ROWS = 15000                  # CSV/TSV 最多解析这么多行
 DEFAULT_PAGE_SIZE = 25                  # 上游页大小默认值
+PREWARM_CONCURRENCY = 6                 # 预热并发(串行要十几分钟, 冷启动期间取不到数)
+
+# 端点专有请求头里的 ${VAR} 引用(凭据从环境变量读, 不进数据文件)
+_ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _dig_path(node: Any, path: str) -> Any:
+    """点号路径取值; 列表只支持数字下标。
+
+    点号切分取不到时, 再按整串字面键试一次 —— 上游 OData 的 "@odata.count"
+    这类键名本身带点, 按 "." 切永远取不到它(与 parser worker / Go parser 同语义)。
+    """
+    root = node
+    for part in path.split("."):
+        if isinstance(node, dict):
+            if part not in node:
+                break
+            node = node[part]
+        elif isinstance(node, list) and part.isdigit():
+            idx = int(part)
+            if idx >= len(node):
+                break
+            node = node[idx]
+        else:
+            break
+    else:
+        return node
+    if isinstance(root, dict) and path in root:
+        return root[path]
+    return None
 
 # 延迟直方图桶边界(ms), 与 gateway/internal/metrics 的 latencyBuckets 严格一致。
 # 500ms 是项目硬契约, 桶在该刻度两侧更密; Prometheus 的 +Inf 桶由输出端补。
@@ -380,9 +411,37 @@ class Resolver:
         """一次上游取数, 受总墙钟预算约束, 正文有上限。返回 (status, body, truncated)。"""
         assert self._client is not None, "client 未初始化"
         async with timeout_ctx(timeout_s), self._client.stream(
-                ep["method"], url, headers=ep.get("headers") or None) as r:
+                ep["method"], url, headers=self._endpoint_headers(ep) or None) as r:
             body, truncated = await self._read_capped(r, self.cfg.max_body_bytes)
             return r.status_code, body, truncated
+
+    def _endpoint_headers(self, ep: dict[str, Any]) -> dict[str, str]:
+        """端点专有请求头; 值里的 ${VAR} 用环境变量替换。
+
+        凭据不进数据文件: 数据里只写变量名, 真正的值由部署时的环境变量提供。
+        引用了未设置的变量时, 整个头都不发 —— 发一个残缺的凭据
+        (比如只剩 "Bearer ")比不发更糟。
+        """
+        out: dict[str, str] = {}
+        for k, v in (ep.get("headers") or {}).items():
+            if not isinstance(v, str):
+                continue
+            names = _ENV_REF_RE.findall(v)
+            if not names:
+                out[k] = v
+                continue
+            values: list[str] = []
+            for name in names:
+                env_value = os.environ.get(name, "")
+                if not env_value:
+                    values = []
+                    break
+                values.append(env_value)
+            if not values:
+                continue
+            out[k] = _ENV_REF_RE.sub(
+                lambda mm: os.environ.get(mm.group(1), ""), v)
+        return out
 
     def _adaptive_ttl(self, ep: dict[str, Any], cache_key: str) -> int:
         """热条目(被反复访问)用更短 TTL, 让数据更新更及时。"""
@@ -481,6 +540,10 @@ class Resolver:
         """后台预热: 建立 TCP/TLS 连接并取一次, 让冷路径也快。
 
         只取小样本(limit=1), 不落业务数据, 只让缓存与连接池热起来。
+
+        预热用的参数必须和真实查询渲染出来的 URL 一致 —— 否则缓存里躺着
+        的是没人会请求的 URL, 源还是冷的, 每次调用照样降级。
+        并发预热: 逐个串行要十几分钟, 冷启动期间大部分源都取不到数。
         """
         if self._client is None or self.offline:
             return
@@ -493,25 +556,63 @@ class Resolver:
                 continue
             targets.append((sid, {
                 "source": sid, "endpoint": ep["id"],
-                "params": {p["name"]: (p.get("example") or p.get("default"))
-                           for p in ep.get("params", []) if p.get("required") and p.get("example")},
+                "params": self._default_params(ep),
                 "limit": 1, "timeout_ms": 450,
             }))
-        for sid, body in targets:
-            try:
-                env = await self.query(QueryRequest(**body), budget_ms=self.cfg.warm_budget_ms)
-                self.prewarmed[sid] = "degraded" if env.meta.degraded else "ok"
-            except Exception as e:
-                self.prewarmed[sid] = f"err:{type(e).__name__}"
+
+        sem = asyncio.Semaphore(PREWARM_CONCURRENCY)
+
+        async def run(sid: str, body: dict[str, Any]) -> None:
+            async with sem:
+                try:
+                    env = await self.query(QueryRequest(**body), budget_ms=self.cfg.warm_budget_ms)
+                    self.prewarmed[sid] = "degraded" if env.meta.degraded else "ok"
+                except Exception as e:
+                    self.prewarmed[sid] = f"err:{type(e).__name__}"
+
+        await asyncio.gather(*(run(sid, body) for sid, body in targets))
         self._prewarm_done = True
+
+    def _default_params(self, ep: dict[str, Any]) -> dict[str, Any]:
+        """调用方不传参时, 查询路径会渲染出来的参数集。
+
+        规则与 _render 一致: 环境变量 > 有 default 的取 default > 必填且只有
+        example 的取 example; email/mailto 端点在值为空时回落到已配置的联系邮箱。
+        """
+        params: dict[str, Any] = {}
+        for p in ep.get("params", []):
+            name = p["name"]
+            if p.get("env"):
+                env_value = os.environ.get(p["env"], "")
+                if env_value:
+                    params[name] = env_value
+                    continue
+            if p.get("default") is not None:
+                params[name] = p["default"]
+            elif p.get("required") and p.get("example") is not None:
+                params[name] = p["example"]
+            if name in ("email", "mailto") and not params.get(name) and self.cfg.contact:
+                params[name] = self.cfg.contact
+        return params
 
     def _render(self, ep: dict[str, Any], req: QueryRequest,
                 page_size: int | None = None) -> str:
         params = dict(req.params or {})
         # 参数默认值
         for p in ep.get("params", []):
+            # 凭据注入: 数据文件里只写环境变量名, 真正的值由部署时提供。
+            # 优先级: 调用方显式传的值 > 环境变量 > 端点声明的默认值。
+            if p["name"] not in params and p.get("env"):
+                env_value = os.environ.get(p["env"], "")
+                if env_value:
+                    params[p["name"]] = env_value
             if p["name"] not in params and p.get("default") is not None:
                 params[p["name"]] = p["default"]
+            # 必填参数的兜底: 端点声明的 example 就是"这个端点怎么调"的答案。
+            # 没有它, 调用方按文档那样 params:{} 调不动大多数端点。
+            if (p["name"] not in params and p.get("required")
+                    and p.get("example") is not None):
+                params[p["name"]] = p["example"]
             # 端点要邮箱参数(如 OpenAlex 的 mailto)且用户已配置 -> 自动填
             if p["name"] in ("email", "mailto") and not params.get(p["name"]) \
                     and getattr(self, "cfg", None) and self.cfg.contact:
@@ -623,16 +724,7 @@ class Resolver:
         item_path = resp.get("item_path")
 
         if total_field:
-            node: Any = payload
-            for part in total_field.split("."):
-                if isinstance(node, dict):
-                    node = node.get(part)
-                elif isinstance(node, list) and part.isdigit():
-                    idx = int(part)
-                    node = node[idx] if idx < len(node) else None
-                else:
-                    node = None
-                    break
+            node = _dig_path(payload, total_field)
             if isinstance(node, int | float):
                 total = int(node)
 
@@ -640,13 +732,7 @@ class Resolver:
         if resp.get("item_shape") == "map" and isinstance(payload, dict):
             data = list(payload.values())          # 形如 {"0": {...}, "1": {...}}
         elif item_path and isinstance(payload, dict):
-            node = payload
-            for part in item_path.split("."):
-                if isinstance(node, dict):
-                    node = node.get(part)
-                else:
-                    node = None
-                    break
+            node = _dig_path(payload, item_path)
             data = node if node is not None else []
 
         truncated = False

@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -37,6 +38,11 @@ var PageSizeParams = map[string]bool{
 
 // CacheBuster is stripped before the request is sent upstream.
 const CacheBuster = "_cb"
+
+// PrewarmConcurrency is the number of sources warmed in parallel. Warming
+// one by one takes more than ten minutes, so the cache stays cold — and
+// every call degrades — for that long after a restart.
+const PrewarmConcurrency = 6
 
 var placeholderRe = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
 
@@ -537,12 +543,42 @@ func (r *Resolver) fetch(ep *registry.EndpointSpec, epKey, url string, timeout t
 		for _, k := range ep.Headers.Keys() {
 			v, _ := ep.Headers.Get(k)
 			if s, ok := v.(string); ok {
-				headers[k] = s
+				// 端点专有请求头里的 ${VAR} 用环境变量替换: 凭据不进数据文件。
+				if expanded, keep := expandEnvRef(s); keep {
+					headers[k] = expanded
+				}
 			}
 		}
 	}
 	res, err := r.client.Fetch(ctx, ep.Method, url, headers, r.cfg.MaxBodyBytes)
 	return res, time.Since(start), err
+}
+
+// envRefRe matches a ${VAR} reference inside a header value.
+var envRefRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandEnvRef replaces ${VAR} references with the environment value.
+//
+// A header whose value references a variable that is not set is dropped
+// entirely: sending "Bearer " with no credential is worse than not sending
+// the header at all.
+func expandEnvRef(s string) (string, bool) {
+	if !strings.Contains(s, "${") {
+		return s, true
+	}
+	matches := envRefRe.FindAllStringSubmatch(s, -1)
+	if len(matches) == 0 {
+		return s, true
+	}
+	out := s
+	for _, m := range matches {
+		v := os.Getenv(m[1])
+		if v == "" {
+			return "", false
+		}
+		out = strings.ReplaceAll(out, m[0], v)
+	}
+	return out, true
 }
 
 // fallbackData returns the cached payload of a failed request.
@@ -692,6 +728,8 @@ func (r *Resolver) Prewarm() {
 	}
 	go func() {
 		budget := r.cfg.WarmBudgetMS
+		sem := make(chan struct{}, PrewarmConcurrency)
+		var wg sync.WaitGroup
 		for _, src := range r.reg.Sources {
 			var ep *registry.EndpointSpec
 			for _, e := range src.Endpoints {
@@ -703,33 +741,67 @@ func (r *Resolver) Prewarm() {
 			if ep == nil {
 				continue
 			}
-			params := parser.NewObject()
-			for _, p := range ep.Params {
-				if p.Required && p.Example != nil {
-					params.Set(p.Name, p.Example)
+			wg.Add(1)
+			go func(src *registry.SourceSpec, ep *registry.EndpointSpec) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				req := QueryRequest{
+					Source:    src.ID,
+					Endpoint:  ep.ID,
+					Params:    prewarmParams(ep, r.cfg.Contact),
+					Fields:    []string{},
+					Limit:     1,
+					TimeoutMS: 450,
 				}
-			}
-			req := QueryRequest{
-				Source:    src.ID,
-				Endpoint:  ep.ID,
-				Params:    params,
-				Fields:    []string{},
-				Limit:     1,
-				TimeoutMS: 450,
-			}
-			env := r.Query(req, &budget)
-			state := "ok"
-			if env.Meta.Degraded {
-				state = "degraded"
-			}
-			r.mu.Lock()
-			r.prewarmed[src.ID] = state
-			r.mu.Unlock()
+				env := r.Query(req, &budget)
+				state := "ok"
+				if env.Meta.Degraded {
+					state = "degraded"
+				}
+				r.mu.Lock()
+				r.prewarmed[src.ID] = state
+				r.mu.Unlock()
+			}(src, ep)
 		}
+		wg.Wait()
 		r.mu.Lock()
 		r.prewarmDone = true
 		r.mu.Unlock()
 	}()
+}
+
+// prewarmParams builds the parameter set a typical caller would send.
+//
+// It mirrors the query path: a parameter with a default takes its default, a
+// required one that only has an example takes that example, and a contact
+// bound parameter (email / mailto) falls back to the configured contact.
+//
+// Prewarming a *different* URL than the one callers use fills the cache with
+// an entry nobody asks for, so the source stays cold and every call
+// degrades. That is why this must not drift from Render.
+func prewarmParams(ep *registry.EndpointSpec, contact string) *parser.Object {
+	params := parser.NewObject()
+	for _, p := range ep.Params {
+		switch {
+		case p.Env != "":
+			if v := os.Getenv(p.Env); v != "" {
+				params.Set(p.Name, v)
+			}
+		}
+		if _, ok := params.Get(p.Name); !ok {
+			switch {
+			case p.Default != nil:
+				params.Set(p.Name, p.Default)
+			case p.Required && p.Example != nil:
+				params.Set(p.Name, p.Example)
+			}
+		}
+		if (p.Name == "email" || p.Name == "mailto") && isFalsy(paramsValue(params, p.Name)) && contact != "" {
+			params.Set(p.Name, contact)
+		}
+	}
+	return params
 }
 
 func (r *Resolver) observe(meta *envelope.Meta, cached bool) {
@@ -930,8 +1002,20 @@ func (r *Resolver) Render(ep *registry.EndpointSpec, req QueryRequest, pageSize 
 		}
 	}
 	for _, p := range ep.Params {
+		// 凭据注入: 数据文件里只写环境变量名, 真正的值由部署时提供。
+		// 优先级: 调用方显式传的值 > 环境变量 > 端点声明的默认值。
+		if _, ok := params.Get(p.Name); !ok && p.Env != "" {
+			if v := os.Getenv(p.Env); v != "" {
+				params.Set(p.Name, v)
+			}
+		}
 		if _, ok := params.Get(p.Name); !ok && p.Default != nil {
 			params.Set(p.Name, p.Default)
+		}
+		// 必填参数的兜底: 端点声明的 example 就是"这个端点怎么调"的答案。
+		// 没有它, 调用方按文档那样 params:{} 调不动大多数端点。
+		if _, ok := params.Get(p.Name); !ok && p.Required && p.Example != nil {
+			params.Set(p.Name, p.Example)
 		}
 		if (p.Name == "email" || p.Name == "mailto") && isFalsy(paramsValue(params, p.Name)) && r.cfg.Contact != "" {
 			params.Set(p.Name, r.cfg.Contact)

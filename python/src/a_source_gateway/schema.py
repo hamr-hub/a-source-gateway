@@ -32,6 +32,7 @@ class ParamSpec:
     pattern: str | None = None
     default: Any = None
     example: Any = None
+    env: str | None = None             # 凭据从哪个环境变量读(值不进数据文件)
 
     def to_dict(self) -> dict[str, Any]:
         d = {k: v for k, v in asdict(self).items() if v is not None}

@@ -195,8 +195,10 @@ func TestBuildRegistryFromDataFiles(t *testing.T) {
 	if doc.Count != want {
 		t.Errorf("count = %d, want %d", doc.Count, want)
 	}
-	if doc.SchemaVersion != "1.0" {
-		t.Errorf("schema_version = %q", doc.SchemaVersion)
+	// Compare against the declared constant instead of a literal: the
+	// schema version moves when a new field is added to the meta spec.
+	if doc.SchemaVersion != SchemaVersion {
+		t.Errorf("schema_version = %q, want %q", doc.SchemaVersion, SchemaVersion)
 	}
 	if doc.BudgetMS != 500 {
 		t.Errorf("budget_ms = %d, want 500", doc.BudgetMS)

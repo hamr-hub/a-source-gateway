@@ -249,6 +249,7 @@ func buildEndpoint(d *parser.Object) (*EndpointSpec, error) {
 					Type:     objString(po, "type", "string"),
 					Required: objBool(po, "required"),
 					Desc:     objString(po, "desc", ""),
+					Env:      objString(po, "env", ""),
 				}
 				if pat, ok := po.Get("pattern"); ok {
 					if s, ok := pat.(string); ok {

@@ -99,6 +99,33 @@ func TestExtractTotalFieldWithListIndex(t *testing.T) {
 	}
 }
 
+// An upstream key whose name contains a dot (OData's "@odata.count") is
+// reachable: the dotted walk falls back to the whole path as one literal key.
+func TestExtractTotalFieldWithDottedLiteralKey(t *testing.T) {
+	raw := []byte(`{"@odata.context":"ctx","@odata.count":3102,"value":[{"a":1}]}`)
+	v, err := UnmarshalOrdered(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, total := Extract(v, Spec{TotalField: "@odata.count"})
+	if total == nil || *total != 3102 {
+		t.Fatalf("total = %v, want 3102", total)
+	}
+}
+
+// The literal fallback must not shadow a real nested path.
+func TestExtractTotalFieldPrefersTheNestedPath(t *testing.T) {
+	raw := []byte(`{"meta":{"total":7},"meta.total":9}`)
+	v, err := UnmarshalOrdered(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, total := Extract(v, Spec{TotalField: "meta.total"})
+	if total == nil || *total != 7 {
+		t.Fatalf("total = %v, want 7 (the nested path wins)", total)
+	}
+}
+
 func TestExtractMapItemShape(t *testing.T) {
 	raw := []byte(`{"0":{"name":"a"},"1":{"name":"b"}}`)
 	v, err := UnmarshalOrdered(raw)

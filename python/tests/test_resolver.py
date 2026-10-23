@@ -43,12 +43,50 @@ def test_render_appends_extra_params():
     assert "rows=" in url
 
 
-def test_render_raises_on_missing_required_param():
+def test_render_falls_back_to_example_for_missing_required_param():
+    """必填参数调用方没传时, 用端点声明的 example 兜底。
+
+    端点 meta 里的 example 就是"这个端点怎么调"的答案; 没有它,
+    调用方按文档那样 params:{} 调不动大多数端点。
+    """
     r = make_resolver(json_handler({}))
     ep = next(e for s in r.sources.values() if s["id"] == "sec_edgar"
               for e in s["endpoints"] if e["id"] == "submissions")
+    url = r._render(ep, QueryRequest(source="sec_edgar", endpoint="submissions", params={}))
+    assert "0000320193" in url
+
+
+def test_render_raises_when_required_param_has_neither_example_nor_default():
+    """既没有 example 也没有 default 的必填参数仍然报错 —— 不能瞎编一个值。"""
+    r = make_resolver(json_handler({}))
+    ep = {
+        "id": "x", "method": "GET", "url_template": "https://example.org/{needed}",
+        "params": [{"name": "needed", "in": "query", "required": True}],
+        "response": {"shape": "object"},
+    }
     with pytest.raises(KeyError):
-        r._render(ep, QueryRequest(source="sec_edgar", endpoint="submissions", params={}))
+        r._render(ep, QueryRequest(source="x", endpoint="x", params={}))
+
+
+def test_render_prefers_env_over_default_and_caller_over_env(monkeypatch):
+    """凭据注入: 调用方显式传的值 > 环境变量 > 端点声明的默认值。"""
+    r = make_resolver(json_handler({}))
+    ep = {
+        "id": "x", "method": "GET", "url_template": "https://example.org/?k={api_key}",
+        "params": [{"name": "api_key", "in": "query", "default": "DEFAULT_KEY",
+                    "env": "A_GATEWAY_TEST_KEY"}],
+        "response": {"shape": "object"},
+    }
+    url = r._render(ep, QueryRequest(source="x", endpoint="x", params={}))
+    assert "k=DEFAULT_KEY" in url
+
+    monkeypatch.setenv("A_GATEWAY_TEST_KEY", "ENV_KEY")
+    url = r._render(ep, QueryRequest(source="x", endpoint="x", params={}))
+    assert "k=ENV_KEY" in url
+
+    url = r._render(ep, QueryRequest(source="x", endpoint="x",
+                                     params={"api_key": "CALLER_KEY"}))
+    assert "k=CALLER_KEY" in url
 
 
 def test_cache_buster_is_not_sent_upstream():
