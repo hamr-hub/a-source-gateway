@@ -75,10 +75,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 凭据扫描
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 安装 gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz -o /tmp/gitleaks.tar.gz
+          tar -C /usr/local/bin -xzf /tmp/gitleaks.tar.gz gitleaks
+      # 直接扫工作树而不是 git log 区间:首提交没有父提交,基于
+      # <首提交>^..HEAD 的扫描在新仓库里会因为区间不存在而失败(误报为 CI 红)。
+      - name: 凭据扫描(工作树)
+        run: gitleaks dir --config=.gitleaks.toml --exit-code 1 .
 
   # ── Go 网关 ──────────────────────────────────────────────────────────
   go:
