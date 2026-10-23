@@ -74,6 +74,10 @@ jobs:
   # ── Python 包 ───────────────────────────────────────────────────────
   pypi:
     name: 发布到 PyPI
+    # PyPI Trusted Publisher 需要先在 PyPI 后台为本仓库登记
+    # (PyPI 项目 → Publishing → OIDC)。登记之前该 job 必然失败,
+    # 但不应该阻塞 GitHub Release / 镜像 / 二进制。
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
