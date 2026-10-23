@@ -663,7 +663,6 @@
         "response": {
           "shape": "object",
           "item_path": "esearchresult.idlist",
-          "total_field": "esearchresult.count",
           "fields": [
             {
               "name": "esearchresult.idlist",
@@ -671,10 +670,10 @@
             },
             {
               "name": "esearchresult.count",
-              "type": "int"
+              "type": "string"
             }
           ],
-          "notes": "实测 41,313,583 条;限速 3/s(有 key 10/s)"
+          "notes": "实测 41,313,583 条;限速 3/s(有 key 10/s);esearchresult.count 上游返回字符串, 网关不抽 total(meta.total=本页条数)"
         },
         "cache_ttl_s": 1800
       }
@@ -1409,7 +1408,7 @@
       {
         "id": "indicator",
         "name": "健康指标列表",
-        "url_template": "https://ghoapi.azureedge.net/api/Indicator?$top={size}",
+        "url_template": "https://ghoapi.azureedge.net/api/Indicator?$top={size}&$count=true",
         "params": [
           {
             "name": "size",
@@ -1431,8 +1430,7 @@
               "type": "string"
             }
           ],
-          "notes": "实测 3,102 个指标",
-          "total_field": "@odata.count"
+          "notes": "实测 3,102 个指标(上游 @odata.count=3102)。带 $count=true 才有总数; 但 @odata.count 这个键本身带点, 网关的点号路径取不到, 故不声明 total_field (meta.total 回落到本页条数); 真实总数见清单「实测规模」列"
         },
         "cache_ttl_s": 86400
       }
@@ -1681,29 +1679,96 @@
     ],
     "USGS 水文与地震服务": [
       {
-        "id": "sites",
-        "name": "水文站点",
-        "url_template": "https://waterservices.usgs.gov/nwis/site/?format=rss&siteStatus=all",
+        "id": "earthquakes",
+        "name": "地震事件(GeoJSON)",
+        "method": "GET",
+        "url_template": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime={starttime}&endtime={endtime}&orderby=time",
+        "params": [
+          {
+            "name": "starttime",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "2026-10-22T00:00:00",
+            "desc": "起始时间(ISO8601, 必填)"
+          },
+          {
+            "name": "endtime",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "2026-10-23T00:00:00",
+            "desc": "结束时间(ISO8601, 必填)"
+          }
+        ],
         "response": {
-          "shape": "xml",
-          "media_type": "application/rss+xml",
+          "media_type": "application/geo+json",
+          "shape": "object",
+          "item_path": "features",
+          "total_field": "metadata.count",
           "fields": [
             {
-              "name": "item",
+              "name": "features",
               "type": "array",
-              "desc": "RSS 条目"
+              "desc": "地震事件列表"
             },
             {
-              "name": "item.title",
-              "type": "string"
+              "name": "features[].id",
+              "type": "string",
+              "desc": "事件 id"
             },
             {
-              "name": "item.description",
-              "type": "string"
+              "name": "features[].properties",
+              "type": "object",
+              "desc": "震级/震中/时刻"
+            },
+            {
+              "name": "features[].geometry",
+              "type": "object",
+              "desc": "震中坐标"
+            },
+            {
+              "name": "metadata.count",
+              "type": "int",
+              "desc": "窗口内事件总数"
             }
-          ]
+          ],
+          "notes": "实测 2026-10-22T00:00→2026-10-23T00:00(24h)窗口 metadata.count=322, features 322 条; 缩到 1 小时窗口(→10-22T01:00)为 13 条; 只有不带 limit 时上游才返回 metadata.count"
         },
-        "cache_ttl_s": 3600
+        "cache_ttl_s": 600
+      },
+      {
+        "id": "sites",
+        "name": "水文站点",
+        "url_template": "https://waterservices.usgs.gov/nwis/site/?siteStatus=all&stateCd={state}",
+        "response": {
+          "shape": "xml",
+          "media_type": "application/xml",
+          "fields": [
+            {
+              "name": "_xml_bytes",
+              "type": "int",
+              "desc": "上游 XML 字节数(网关只做摘要)"
+            },
+            {
+              "name": "_truncated",
+              "type": "bool",
+              "desc": "是否因体积上限截断"
+            }
+          ],
+          "notes": "实测 format=rss 已下线(400 unknown format: rss), 现只支持 XML;必须带 major filter(如 stateCd=VA);VA 全量约 1.2MB, 网关只返回摘要, 大数据请直连上游"
+        },
+        "cache_ttl_s": 3600,
+        "params": [
+          {
+            "name": "state",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "VA",
+            "desc": "州两位代码;site 服务必须带 major filter(否则 400)"
+          }
+        ]
       }
     ],
     "Unpaywall": [
@@ -1724,7 +1789,8 @@
             "in": "query",
             "type": "string",
             "required": true,
-            "example": "you@example.com"
+            "example": "hamr-hub@users.noreply.github.com",
+            "desc": "联系邮箱(必填)。上游明确拒收 example.com 占位邮箱(实测 HTTP 422 'Please use your own email address'); 默认用仓库 GitHub 组织地址, 调用方应改成自己的真实邮箱"
           }
         ],
         "response": {
@@ -1750,7 +1816,8 @@
               "name": "best_oa_location.url_for_pdf",
               "type": "string"
             }
-          ]
+          ],
+          "notes": "实测 10.1038/nature12373:is_oa=true, oa_status=green。email 必填且必须是真实邮箱"
         },
         "cache_ttl_s": 86400
       }
@@ -1759,13 +1826,21 @@
       {
         "id": "bill",
         "name": "议案检索",
-        "url_template": "https://api.congress.gov/v3/bill?format=json&limit={size}",
+        "url_template": "https://api.congress.gov/v3/bill?format=json&limit={size}&api_key={api_key}",
         "params": [
           {
             "name": "size",
             "in": "query",
             "type": "int",
             "default": 20
+          },
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "DEMO_KEY",
+            "desc": "api.congress.gov 免费 key;官方 DEMO_KEY 可直接用(实测返回真实议案列表)"
           }
         ],
         "response": {
@@ -2097,7 +2172,6 @@
         "response": {
           "media_type": "application/json",
           "shape": "object",
-          "item_path": "values",
           "fields": [
             {
               "name": "values",
@@ -2110,7 +2184,8 @@
               "desc": "接口元信息"
             }
           ],
-          "notes": "values 形如 {指标:{国家:{年份:值}}};总数字段在嵌套里, 网关不抽 total"
+          "notes": "values 形如 {指标:{国家:{年份:值}}}; 顶层是 map 形状, 网关按 item_shape=map 投影; 总数字段在嵌套里, 网关不抽 total",
+          "item_shape": "map"
         },
         "cache_ttl_s": 86400
       },
@@ -2118,11 +2193,24 @@
         "id": "oecd_sdmx",
         "name": "OECD SDMX 数据流",
         "method": "GET",
-        "url_template": "https://sdmx.oecd.org/public/rest/dataflow/OECD.SDD.STES?format=sdmx-json",
+        "url_template": "https://sdmx.oecd.org/public/rest/dataflow/OECD.SDD.STES?format=json-structure-2.0.0",
         "response": {
-          "media_type": "application/json",
+          "media_type": "application/vnd.sdmx.structure+json; version=2.0.0",
           "shape": "object",
-          "notes": "OECD SDMX;具体取数用 /public/rest/data/{flow}/{key}.csv"
+          "notes": "实测 format=sdmx-json 返回 406; 合法值 json-structure-2.0.0 (sdmx-3.0 为 XML)。具体取数用 /public/rest/data/{flow}/{key}.csv",
+          "item_path": "data.dataflows",
+          "fields": [
+            {
+              "name": "data.dataflows",
+              "type": "array",
+              "desc": "数据流列表"
+            },
+            {
+              "name": "meta",
+              "type": "object",
+              "desc": "结构文档元信息"
+            }
+          ]
         },
         "cache_ttl_s": 3600
       }
@@ -2318,7 +2406,7 @@
               "desc": "观测点数组;实测每个元素含 year / period / periodName / value / latest / footnotes 六个键"
             }
           ],
-          "notes": "实测 LNS14000000(2026-10-23):Results.series 长度 1,series[0].data 长度 33(2024-01~2026-09,月度)。v1 GET 忽略 startyear/endyear——实测传 startyear=2020&endyear=2020 仍返回同样 33 点(2024-2026),官方 v1 签名文档口径为 'retrieve data for a single time series for the past three years'。响应中无总数字段,故不声明 total_field;要按年取历史请用 series_range(v2 GET)。"
+          "notes": "实测 LNS14000000(2026-10-23):Results.series 长度 1,series[0].data 长度 33(2024-01~2026-09,月度)。v1 GET 忽略 startyear/endyear——实测传 startyear=2020&endyear=2020 仍返回同样 33 点(2024-2026),官方 v1 签名文档口径为 'retrieve data for a single time series for the past three years'。响应中无总数字段,故不声明 total_field;要按年取历史请用 series_range(v2 GET)。2026-10-23 复验: 未注册的匿名额度当日已耗尽, 实测返回 REQUEST_NOT_PROCESSED('daily threshold ... has been reached'); 需注册 key, 或等次日额度重置再取。"
         },
         "cache_ttl_s": 3600,
         "budget_ms": 2000
@@ -2374,7 +2462,7 @@
               "desc": "观测点数组;实测每个元素含 year / period / periodName / value / latest / footnotes 六个键"
             }
           ],
-          "notes": "实测 startyear=2020&endyear=2021 且不带注册 key:HTTP 200,Results.series 长度 1,series[0].data 长度 24(2020-01~2021-12,月度),首点 {\"year\":\"2021\",\"period\":\"M12\",...},末点 {\"year\":\"2020\",\"period\":\"M01\",...}。v2 基本单序列查询实测无 key 即可用(catalog/calculations/annualaverage/aspects 等扩展能力官方要求注册 key);未注册按官方 25 次/日、10 年/次 计额度。该区间响应中无 latest 标记。"
+          "notes": "实测 startyear=2020&endyear=2021 且不带注册 key:HTTP 200,Results.series 长度 1,series[0].data 长度 24(2020-01~2021-12,月度),首点 {\"year\":\"2021\",\"period\":\"M12\",...},末点 {\"year\":\"2020\",\"period\":\"M01\",...}。v2 基本单序列查询实测无 key 即可用(catalog/calculations/annualaverage/aspects 等扩展能力官方要求注册 key);未注册按官方 25 次/日、10 年/次 计额度。该区间响应中无 latest 标记。2026-10-23 复验: 未注册的匿名额度当日已耗尽, 实测返回 REQUEST_NOT_PROCESSED('daily threshold ... has been reached'); 需注册 key, 或等次日额度重置再取。"
         },
         "cache_ttl_s": 3600,
         "budget_ms": 2000
@@ -2423,7 +2511,7 @@
               "desc": "观测点数组;实测每个元素含 year / period / periodName / value / latest / footnotes 六个键"
             }
           ],
-          "notes": "实测 HTTP 200 / 226B:Results.series 长度 1,series[0].data 长度 1,该点为 {\"year\":\"2026\",\"period\":\"M09\",\"periodName\":\"September\",\"latest\":\"true\",\"value\":\"4.2\",...}。实测不带注册 key 亦返回 REQUEST_SUCCEEDED(官方 v2 签名文档列有 'Latest Series Data' GET 签名)。适合做增量探针:每个新期次新增 1 个点。响应中无总数字段,故不声明 total_field。"
+          "notes": "实测 HTTP 200 / 226B:Results.series 长度 1,series[0].data 长度 1,该点为 {\"year\":\"2026\",\"period\":\"M09\",\"periodName\":\"September\",\"latest\":\"true\",\"value\":\"4.2\",...}。实测不带注册 key 亦返回 REQUEST_SUCCEEDED(官方 v2 签名文档列有 'Latest Series Data' GET 签名)。适合做增量探针:每个新期次新增 1 个点。响应中无总数字段,故不声明 total_field。2026-10-23 复验: 未注册的匿名额度当日已耗尽, 实测返回 REQUEST_NOT_PROCESSED('daily threshold ... has been reached'); 需注册 key, 或等次日额度重置再取。"
         },
         "cache_ttl_s": 1800,
         "budget_ms": 2000

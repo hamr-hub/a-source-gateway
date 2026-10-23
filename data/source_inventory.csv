@@ -31,13 +31,13 @@
 三、制裁与合规黑名单,EU 金融制裁综合名单 (FSF),欧盟,欧盟,欧盟金融制裁名单与合并,https://webgate.ec.europa.eu/fsd/fsf/,无key,无,XML/CSV,日,"以 FSF 导出 XML 的条目数计,随周更变化",日更/周更,不走代理,低,每日下载,307,
 三、制裁与合规黑名单,UK OFSI 综合名单,英国财政部,英国,英国金融制裁名单,https://www.gov.uk/government/publications/the-uk-sanctions-list,无key,无,CSV/XML,日,以 UK Sanctions List CSV 行数计,日更,不走代理,低,每日下载,200,
 三、制裁与合规黑名单,UN 安理会综合名单,联合国,全球,安理会制裁名单,https://main.un.org/securitycouncil/en/content/un-sc-consolidated-list,无key,无,XML,日,实测 consolidated.xml 2489 行(名单+别名展开前),随安理会决议即时更新,不走代理,低,每日下载,200,
-三、制裁与合规黑名单,World Bank 禁入名单,世界银行,全球,被禁止参与世行项目的个人与公司,https://apigwext.worldbank.org/dvsvc/v1.0/json/APPLICATION/ADOBE_EXPERIENCE_MANAGER/FIRM/SANCTIONED_FIRM,无key,无,XLSX/JSON,日,以 SANCTIONED_FIRM / SANCTIONED_INDIVIDUAL API 返回数计(需认证),日更,不走代理,低,每日下载,401,
+三、制裁与合规黑名单,World Bank 禁入名单,世界银行,全球,被禁止参与世行项目的个人与公司,https://apigwext.worldbank.org/dvsvc/v1.0/json/APPLICATION/ADOBE_EXPERIENCE_MANAGER/FIRM/SANCTIONED_FIRM,免费key,需 APIM 订阅密钥(免费注册);官方未公布 QPS 口径,XLSX/JSON,日,以 SANCTIONED_FIRM / SANCTIONED_INDIVIDUAL API 返回数计(需认证),日更,不走代理,低,每日下载,401,
 三、制裁与合规黑名单,多边开发银行除名名单 (IDB/ADB/AfDB/EIB),各MDB,全球,采购除名与整改名单,https://www.adb.org/projects/sanctions,无key,无,公开文件,日,"各行单独计数,合计约千条级",日更,不走代理,低,每日下载,403,
 三、制裁与合规黑名单,BIS Entity List / DPL / UVL,美国商务部,美国,出口管制与拒绝许可名单,https://www.trade.gov/consolidated-screening-list,无key,无,CSV/XML,日,实测 consolidated.csv 26174 行(含多名单去重前),日更(随联邦公报规则更新),不走代理,低,每日下载,200,
 三、制裁与合规黑名单,各国防务与涉恐出口管制名单 (METI/DFAT/SEMA/SESAM/韩国),各政府,多国,出口管制/防务用户名单,https://www.meti.go.jp/policy/external_economy/trade_control/01_seido/04_seisai/index.html,无key,无,公开文件,日,"各国单独计数,合计千条级",日更/随法规更新,不走代理,低,每日下载,403,
 三、制裁与合规黑名单,OpenSanctions,OpenSanctions,全球,全球制裁与PEP聚合(基于官方名单),https://www.opensanctions.org/,免费/付费,无,有,日,"default 数据集聚合全球官方名单,实体数百万级(需下载索引)",日更(聚合多国官方名单),兜底,低,作聚合层；原始判定仍以官方名单为准,200,
 四、土地房产,HMLR Price Paid Data,英国土地注册局,英国,英格兰与威尔士真实成交价/地址/产权类型/新房标识,http://prod.publicdata.landregistry.gov.uk.s3-website-eu-west-1.amazonaws.com/,无key,无,累计pp-complete.csv + 每月增量csv,月,累计文件5.53GB；月增量文件15.84MB=90866笔成交,"约 9.1 万笔/月 ≈ 110 万笔/年(月增量文件 15.84MB / 90,866 笔)",不走代理,低,月增量文件增量入库+累计文件冷存,403,
-四、土地房产,Registers of Scotland PPD,苏格兰土地登记处,英国苏格兰,苏格兰成交价数据,https://www.registers-of-scotland.co.uk/,无key,无,有,月,"按月文件行数计(与 HMLR 同结构,规模约其 1/8)",月度,直连,低,官方文件,ERR:gaierror,
+四、土地房产,Registers of Scotland PPD,苏格兰土地登记处,英国苏格兰,苏格兰成交价数据,https://opendata.scot/datasets/registers+of+scotland-house+prices+-+residential+properties+sales+and+price/,无key,无公开口径(按周更新批量文件),有,月,"按月文件行数计(与 HMLR 同结构,规模约其 1/8)",月度,直连,低,官方文件,200,648
 四、土地房产,Land Registers NI,北爱土地登记处,英国北爱,北爱尔兰成交价,https://www.nidirect.gov.uk/,无key,无,有,月,按月文件行数计(规模约 HMLR 的 1/30),月度,直连,低,官方文件,200,
 四、土地房产,Kadaster 荷兰不动产登记,荷兰Kadaster,荷兰,不动产权属登记,https://www.kadaster.nl/,无key,无,有限,日,"以 kadastrale objecten 导出计,千万级",日更,直连,低,官方接口,200,
 四、土地房产,Land Titles NSW / QLD / LINZ NZ,各州与新西兰LINZ,澳新,产权与交易登记,https://www.nsw.gov.au/housing-and-property,部分付费,各不同,有限,日,"各州分别计数,NSW 物件约 1000 万+",日更,直连,中,按需,200,
@@ -52,7 +52,7 @@
 五、医药与生命科学,WHO GHO / GHED / ICTRP,世界卫生组织,全球,全球健康指标与卫生支出/试验登记,https://ghoapi.azureedge.net/api,无key,无,有,周/月,实测 GHO 指标 3102 个,周/月,兜底,低,API直取,200,
 五、医药与生命科学,CDC / NIOSH / ECDC,各卫生机构,美欧,疾病监测/职业健康/传染病,https://data.cdc.gov/,无key,无,有,周,"按数据集分表,核心数据集百余个",周/月,兜底,低,官方数据下载,200,
 五、医药与生命科学,NMPA / PMDA,中国与日本药监,中日,药品审批/召回/临床试验,https://www.nmpa.gov.cn/,无,无,有限,日,NMPA 药品批准约 1.8 万个;PMDA 约 1 万个,日更,直连,低,官方公告抓取,200,
-六、专利与知识产权,PatentsView,美国USPTO,美国,专利元数据/权利要求/引用网络/发明人归属/技术分类,https://search.patentsview.org/api/v1/patent/,免费key,无公开口径,旧版全量已下线,周/月,search.patentsview.org 在本机网络不可达(未实测),周更,兜底,低,新版API需key；全量走USPTO批量,ERR:gaierror,
+六、专利与知识产权,PatentsView,美国USPTO,美国,"专利申请检索/公开文本(原 PatentsView 检索 API, 已并入 USPTO 数据平台)",https://api.uspto.gov/api/v1/patent/applications/search,免费key,免费 key;官方未公布 QPS 口径,旧版全量已下线,周/月,原 search.patentsview.org 检索 API 已并入 USPTO 数据平台; api.uspto.gov/api/v1/patent/applications/search 实测 401(需免费 key); 全量走 USPTO 批量,周更,兜底,低,新版API需key；全量走USPTO批量,401,976
 六、专利与知识产权,USPTO 批量数据 (bulkdata/PEDS/Assignment),美国USPTO,美国,授权专利全文XML/审查历史/权利转让,https://developer.uspto.gov/data,无key,无,周/季/年全量文件,周/季,每周批量:单周授权约 5000-8000 件,每周批量(单周授权约 5000-8000 件),不走代理,低,按周/季下载增量文件,200,
 六、专利与知识产权,EPO OPS,欧洲专利局,欧盟,专利著录/法律状态/同族/引文,https://ops.epo.org/3.2/rest-services/,免费key,注册约4000次/12小时(匿名实测403 Fair Use),无(实时),实时,匿名请求实测被拒(403),实时(受 4000 次/12h 配额约束),不走代理,低,注册key后按配额增量监控,403,
 六、专利与知识产权,Espacenet / EPO Register,欧洲专利局,欧盟,专利检索与法律状态,https://worldwide.espacenet.com/,无key,人工10次搜索/分(明示禁止机器人),无,日,"与 OPS 同库,检索页不提供总量",实时,直连,高(条款禁止自动检索),只走OPS不用页面抓取,403,
@@ -86,7 +86,7 @@
 八、宏观贸易与统计,College Scorecard 院校数据,美国教育部(ED),美国,院校名录与地址、办学性质与认证机构、招生录取与分数、在校生规模、毕业率与完成率、学费与净价、奖助与债务、还贷违约率、毕业收入、学科专业(CIP)明细,https://collegescorecard.ed.gov/data/api-documentation/,可选key,"官方 API 文档：默认 1,000 请求/IP/小时，超限返回 429；data.gov 通用口径：1,000 次/小时，DEMO_KEY 30 次/小时 + 50 次/天",zip/xlsx,年,实测 6278 所院校(metadata.total),按 metadata.page 分页全量(per_page 上限 100)+以 latest.* 字段随年度发布的变动为增量判据；实测 school.state=NY 子集命中 418 所,不走代理,低,按 metadata.page 分页全量拉取(per_page=100)+官方年度 zip 兜底；字段口径以官方 CollegeScorecardDataDictionary.xlsx 为准,200,3112
 八、宏观贸易与统计,日本 e-Stat 政府统计,日本总务省统计局(e-Stat),日本,政府统计表目录与数值(人口/劳动/物价/产业等法定政府统计),https://www.e-stat.go.jp/,免费key,无公开口径,有(统计表 CSV/Excel 批量下载),月/季/年(按统计表),"未实测(接口返回认证失败,需 appId)",按 statsCode 逐统计表增量(需 key 后实测),不走代理,"低(法定政府统计,官方免费开放)",目录 getStatsList + 按 statsCode 取数 getStatsData,401,677
 八、宏观贸易与统计,US Census Bureau API (ACS/人口普查),美国人口普查局(Census Bureau),美国,ACS 1年/5年人口社会经济估计/十年人口普查(decennial)/人口估计(PEP),https://api.census.gov/data.html,可注册key,"无公开口径(www.census.gov 开发者页被 Cloudflare 拦截,未取到原文);实测无 key 时 302 跳 missing_key.html",有(各数据集 CSV/zip 官方下载),年(ACS 年度/5年估计)、年(PEP vintage),未实测(无 key);官方变量目录实测 ACS5-2023 共 28299 个变量,按 ACS 年份发布批次 + PEP 年度 vintage 增量,不走代理,低(法定普查与统计发布),按数据集与年份批量拉;变量名取自官方变量目录,302,1300
-九、司法与政府公开,CourtListener / RECAP,Free Law Project,美国,联邦法院案卷与文书,https://www.courtlistener.com/api/rest/v3/opinions/?format=json,无key(有限),有频率限制,有,日,"API v3/v4 均需认证(401),规模以 RECAP 全库计",日更(法院文书入库即时),兜底,低,API直取,401,
+九、司法与政府公开,CourtListener / RECAP,Free Law Project,美国,联邦法院案卷与文书,https://www.courtlistener.com/api/rest/v4/opinions/?format=json,需token,需注册 Token(免费);官方未公布 QPS 口径;站点还有 AWS WAF 人机校验,有,日,"API v3/v4 均需认证(401),规模以 RECAP 全库计",日更(法院文书入库即时),兜底,低,API直取,401,
 九、司法与政府公开,PACER,美国联邦法院,美国,联邦案卷原件与文书,https://pacer.uscourts.gov/,账号+付费,有公开口径,无,日,"全美联邦法院案卷,亿级(需账号付费)",日更,直连,中(付费且有使用条款),只在有账号有预算时用,200,
 九、司法与政府公开,US Federal Register API,美国国家档案馆,美国,联邦公报/规章/总统文件,https://www.federalregister.gov/api/v1/documents.json?per_page=1,无key,无,有,日,count 字段封顶 10000(需按日期分段);实际年发布量约 10 万份,日更(年发布量约 10 万份),兜底,低,API直取,200,
 九、司法与政府公开,Congress.gov / GovInfo,美国GPO,美国,立法与政府出版物,https://api.congress.gov/,免费key,无,有,日,议案约 300 万件(按 Congress 编号计),日更,兜底,低,API直取,200,
