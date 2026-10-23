@@ -1,0 +1,239 @@
+# meta 规范
+
+网关的"meta"分三层:**源级 meta**、**端点级 meta**、**调用级信封 meta**。
+运行时 `GET /v1/schema` 会吐出本文的机器可读版本。
+
+---
+
+## 1. 调用级信封(ResponseEnvelope)
+
+所有调用返回同一个形状。`meta` 描述**这次请求**,`data` 只放结果,两者严格分离。
+
+```jsonc
+{
+  "meta": { ... },       // 见 §1.1
+  "data": [ ... ],       // 列表或对象; 与端点 meta 里声明的结构一致
+  "fields": ["DOI", "publisher"]   // 本次实际返回的字段名
+}
+```
+
+### 1.1 `meta` 字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `request_id` | string | 本次请求 id(12 位十六进制) |
+| `schema_version` | string | 信封版本,当前 `1.0` |
+| `source` | string | **规范源 id**(即使用简称请求也会回报规范 id) |
+| `endpoint` | string | 端点 id |
+| `upstream` | object | `{url, method, status, latency_ms}` —— 实际打到的上游 |
+| `latency_ms` | int | **客户端可见总耗时**(含序列化与框架开销) |
+| `budget_ms` | int | 本次预算,恒 ≤500 |
+| `cached` | bool | 是否命中缓存(含 stale 命中) |
+| `cache_age_s` | int | 缓存年龄(秒) |
+| `degraded` | bool | 是否降级返回 |
+| `offline` | bool | 网关是否处于离线模式 |
+| `count` | int | 本次返回条数 |
+| `total` | int/null | 上游记录总数(null = 上游未提供) |
+| `truncated` | bool | 是否被 `limit` 截断 / 上游页已取满 |
+| `next_cursor` | string/null | 下页游标(目前恒 null,见优化报告 §3.8) |
+| `rate_limit` | object | `{policy, remaining}`(目前为空) |
+| `parser` | string | **实际使用的解析引擎**:`python`(解析面子进程)\|`go`(内置兜底解析器)。见 ADR-018 |
+| `trace_id` | string | 本次请求的链路 id(32 位十六进制),用于把网关日志、解析面日志与调用方串起来 |
+| `fallback` | object | **降级时的直连兜底**:`{upstream_url, method, hint}` |
+| `errors` | array | `[{type, message, status?}]` |
+
+> **v1.1 新增**:`parser` 与 `trace_id` 是**增量字段**,不改变信封的既有形状。
+> `parser` 存在的意义是让"换了解析引擎"永远是可观测的 —— 不允许静默换引擎
+> (ADR-018)。`trace_id` 在 Python 侧与 Go 侧都会产生,取值规则见下:
+> **优先用上游传入的 `X-Request-Id` / `X-Gateway-Trace-Id` 头,没有则生成**。
+
+### 1.2 降级类型(`errors[].type`)
+
+| type | 含义 | 调用方该做什么 |
+|---|---|---|
+| `timeout` | 上游超过预算 | 看 `fallback.upstream_url` 直连;或稍后重试(后台在补数) |
+| `upstream_error` | 上游返回 4xx/5xx | 看 `errors[].message` 里的上游原文 |
+| `response_too_large` | 响应超正文上限被截断 | 减小 `limit`,或直连上游 / 走批量下载 |
+| `stale` | 缓存已过期,返回陈旧值 | 视场景接受,或稍后重试 |
+| `offline` | 网关离线模式 | 只用元数据与已缓存数据 |
+| `contact_required` | 该源要求 UA 带联系邮箱但未配置 | 设 `A_GATEWAY_CONTACT=you@example.com` |
+| `budget_exceeded` | 实际耗时超预算 | 上报异常,通常伴随上游变慢 |
+| `not_found` | 未知源 / 未知端点 | 用 `list_sources` 重新定位 |
+| `missing_param` | 缺必填参数 | 看端点 meta 的 `params` |
+| `endpoint_not_found` | 该源没有这个端点 | 用 `describe_endpoint` 列端点 |
+
+---
+
+## 2. 源级 meta(SourceSpec)
+
+```jsonc
+{
+  "id": "crossref",                 // 规范 id
+  "name": "Crossref",
+  "family": "七、学术与文献",
+  "org": "Crossref",
+  "country": "全球",
+  "summary": "DOI 元数据/引用/资助信息/许可协议",
+  "homepage": "https://api.crossref.org/works",
+  "link_status": "200",             // 最近一次链接校验的状态码
+  "link_checked_at": "2026-10-22",
+  "auth": {
+    "type": "none",                 // none|api_key|oauth2|token|email_param|paid|mixed
+    "optional": false,              // 凭据是否可选
+    "note": "无key"                  // 原文口径
+  },
+  "limits": {
+    "rate_per_sec": null,           // 部分源未在清单里量化,故为 null
+    "burst": null,
+    "daily_credits": null,
+    "note": "50次/秒(礼貌池)"
+  },
+  "scale": {
+    "total": 187910966,
+    "unit": "records",
+    "measured_at": "2026-10-22",
+    "basis": "实测187910966条DOI"     // 计数口径(怎么数出来的)
+  },
+  "increment": {
+    "frequency": "daily",
+    "daily": "30天新增 1231180 条(≈4.1万/日);单日新增 73625 但索引变更 753681(约 10 倍)",
+    "window": "2026-10-01 → 2026-10-22",
+    "strategy": "新增用from-created-date;变更用from-index-date"
+  },
+  "crawl": {
+    "mode": "query",
+    "batch_files": [],
+    "notes": "全量 JSON 导出"
+  },
+  "proxy_policy": "fallback",       // never|fallback —— 是否允许走代理兜底
+  "risk": "low",                    // low|medium|high 合规风险
+  "tags": ["七、", "全球"],
+  "aliases": ["crossref", "doi"],   // 常见简称
+  "ua_requires_contact": false,     // 该源是否要求 UA 带联系邮箱
+  "endpoints": [ ... ]               // 见 §3
+}
+```
+
+---
+
+## 3. 端点级 meta(EndpointSpec)
+
+这是"接口怎么调、返回什么"的核心。**调用方不需要猜任何字段。**
+
+```jsonc
+{
+  "id": "works",
+  "name": "DOI 检索",
+  "method": "GET",
+  "url_template": "https://api.crossref.org/works?filter={filter}&rows={size}",
+  "headers": { "Accept": "application/json" },   // 端点专有请求头
+  "page_size": 10,                   // 上游页大小(字段肥的源调小)
+  "params": [
+    {
+      "name": "filter", "in": "query", "type": "string",
+      "required": true, "desc": "created=新增, index=变更(量约 10 倍)",
+      "pattern": null, "default": null,
+      "example": "from-index-date:2026-10-21"
+    }
+  ],
+  "response": {
+    "media_type": "application/json",
+    "shape": "object",                // object|array|csv|xml|tsv|text
+    "fields": [
+      {"name": "message.items", "type": "array", "desc": "文献条目"},
+      {"name": "message.total-results", "type": "int", "desc": "命中总数"}
+    ],
+    "item_path": "message.items",     // 列表数据在响应里的位置
+    "item_shape": "list",             // list|map —— map 表示顶层是 {id: 记录} 字典
+    "total_field": "message.total-results",
+    "notes": "实测 187,910,966 条"
+  },
+  "cache_ttl_s": 900,
+  "budget_ms": 400,                   // 该端点允许的上游墙钟
+  "notes": ""
+}
+```
+
+### 3.1 `params[].in`
+
+`path` / `query` / `header` / `body`。`path` 表示占位在 URL 路径里。
+
+### 3.2 `response.item_path` 与 `item_shape`
+
+- `item_shape=list`(默认):列表在 `item_path` 指向的位置;
+- `item_shape=map`:顶层就是 `{id: 记录}` 字典,网关取**值域**作为列表
+  (例:SEC `company_tickers` 是 `{"0": {...}, "1": {...}}`,实测 10,425 条)。
+
+### 3.3 `response.total_field`
+
+点号路径,指向**总数**所在字段(通常是整数)。网关把它放进 `meta.total`。
+数组下标也支持(如 `0.total`)。
+
+---
+
+## 4. 请求
+
+```jsonc
+{
+  "source": "crossref",              // 也接受简称: crossref / Crossref / doi
+  "endpoint": "works",
+  "params": { "filter": "from-index-date:2026-10-21" },
+  "fields": ["DOI", "publisher"],    // 只回这些字段(投影)
+  "limit": 20,                       // 1..500
+  "since": "2026-10-01",             // 增量窗口(由端点语义决定)
+  "timeout_ms": 500                  // 50..500,上限 500
+}
+```
+
+**保留参数 `_cb`**:只进缓存键、不发给上游,用于强制冷路径测试(基准用)。
+
+---
+
+## 5. 源清单 CSV 的列契约
+
+源级 meta 的事实源是**两份清单**,按 `国别` 列分工 —— 一个源只属于一份清单:
+
+| 清单 | 装什么 | 列 | 网关运行时 |
+|---|---|---|---|
+| `data/source_inventory.csv` | 海外源(`国别` ≠ 中国) | 17 列 | 全量加载 |
+| `data/source_inventory_cn.csv` | 国内源(`国别` = 中国) | 18 列 | 只加载"已接入"的行 |
+
+两份清单的**前 17 列列名与列序完全一致**;第 18 列 `优先级`(`P0`/`P1`/`P2`)是**国内清单专有**,
+海外清单没有这一列。
+
+**"已接入"是可机器判定的**:一个国内源在 `data/endpoints.json` 里有端点定义 → **已接入** →
+网关加载它;只在 CSV 里、没有端点定义 → **候选** → 网关**不加载**(候选不污染网关的源列表)。
+因此 `meta` 里出现的国内源,一定同时能在 `data/endpoints.json` 找到对应的端点定义。
+
+海外清单的 17 列契约如下 —— 列名即契约:
+
+| 列 | 说明 |
+|---|---|
+| `分类` | 十族之一 |
+| `数据源` | 源名称(与 `endpoints.json` 的键对应) |
+| `机构` | 发布机构 |
+| `国别` | 覆盖范围 |
+| `数据内容` | 内容摘要 |
+| `官方入口` | 官方 URL(必须可直达) |
+| `认证方式` | 原文口径(`无key` / `免费key` / `需token` / `部分付费` …) |
+| `官方限速口径` | 官方公布的限速原文 |
+| `全量下载` | 批量文件/导出方式 |
+| `更新频率` | daily / weekly / monthly / quarterly / realtime |
+| `实测规模` | 总量与计数口径 |
+| `实测增量` | 增量速率与取法 |
+| `代理需求` | `不走代理` / `兜底` / `直连` |
+| `合规风险` | low / medium / high |
+| `建议采集方式` | 增量策略 |
+| `链接状态` | 最近一次校验的状态码 |
+| `探测耗时ms` | 最近一次校验耗时 |
+
+> `认证方式` 与 `实测增量` 有两条硬约束(由 `a-source-gateway validate` 检查):
+> ① `实测增量` **不能**是 `实测规模` 的复制;② `实测增量` 不能为空。
+
+---
+
+## 6. 版本策略
+
+- `schema_version` 语义化。**加字段 = 小版本**;**改字段语义或删字段 = 大版本**。
+- 信封里未知字段应当被忽略(向前兼容)。
+- v1.x 期间 `data` 的结构不做破坏性变更;端点 meta 的 `fields` 只增不删。

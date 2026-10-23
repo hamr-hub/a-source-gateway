@@ -1,0 +1,42 @@
+name: 新增数据源
+description: 提议新增一个 A 类(法规强制公开)数据源
+labels: [new-source]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: 源名称
+    validations:
+      required: true
+  - type: input
+    id: entry
+    attributes:
+      label: 官方入口
+      placeholder: https://api.example.org/...
+    validations:
+      required: true
+  - type: textarea
+    id: content
+    attributes:
+      label: 数据内容
+    validations:
+      required: true
+  - type: textarea
+    id: auth
+    attributes:
+      label: 认证与限速
+      description: 需不需要 key?官方公布的限速口径是什么?
+    validations:
+      required: true
+  - type: textarea
+    id: scale
+    attributes:
+      label: 规模与增量
+      description: 总量是多少?怎么数出来的?多久更新一次?增量怎么取?
+  - type: textarea
+    id: terms
+    attributes:
+      label: 使用条款
+      description: 该站是否允许程序化访问?依据是什么?
+    validations:
+      required: true

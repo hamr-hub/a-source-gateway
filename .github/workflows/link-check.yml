@@ -1,0 +1,173 @@
+name: Link Check
+
+# 每周检查 data/source_inventory.csv 里「官方入口」列的 URL 是否还能解析。
+#
+# 只读主分支:发现失效只开 issue,绝不自动改源清单 ——
+# 上游抖动很常见,自动改会把清单改脏(项目已明确决定)。
+on:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: link-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: 官方入口可达性
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 取出「官方入口」列
+        run: |
+          mkdir -p .linkcheck
+          python3 - <<'PY'
+          import csv
+          import json
+
+          rows = []
+          with open('data/source_inventory.csv', encoding='utf-8', newline='') as fh:
+              for row in csv.DictReader(fh):
+                  url = (row.get('官方入口') or '').strip()
+                  name = (row.get('数据源') or '').strip()
+                  if url:
+                      rows.append({'name': name, 'url': url})
+          with open('.linkcheck/urls.json', 'w', encoding='utf-8') as fh:
+              json.dump(rows, fh, ensure_ascii=False, indent=2)
+          with open('.linkcheck/urls.tsv', 'w', encoding='utf-8') as fh:
+              for r in rows:
+                  fh.write(f"{r['name']}\t{r['url']}\n")
+          print(f"共 {len(rows)} 个官方入口待检查")
+          PY
+
+      - name: 逐个探测
+        env:
+          # 礼貌的 UA:说明身份 + 给出联系入口。
+          # ⚠️ 建议在仓库变量里配一个 LINK_CHECK_CONTACT(真实邮箱):
+          #    SEC 等上游要求 UA 里带联系邮箱,不带会直接 403 ——
+          #    那种 403 会被判成"可达但受限",不报失败,但也测不出真实可达性。
+          LINK_CHECK_UA: >-
+            a-source-gateway-linkcheck/1.0
+            (+https://github.com/hamr-hub/a-source-gateway${{ vars.LINK_CHECK_CONTACT && format(' ({0})', vars.LINK_CHECK_CONTACT) || '' }})
+        run: |
+          set -u
+          : > .linkcheck/results.tsv
+          while IFS=$'\t' read -r name url; do
+            [ -n "$url" ] || continue
+            # 短超时 + 跟随重定向;只看状态码,不看正文。
+            # 注意:curl 失败时它自己也会输出 000,所以兜底要放在外面,
+            # 否则会拼成 "000000"。
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+                     --max-time 12 --connect-timeout 6 \
+                     -A "$LINK_CHECK_UA" -L "$url" 2>/dev/null) || code="000"
+            printf '%s\t%s\t%s\n' "$name" "$url" "$code" >> .linkcheck/results.tsv
+            echo "::debug::$code $name $url"
+            sleep 0.5
+          done < .linkcheck/urls.tsv
+
+      - name: 汇总
+        id: summary
+        run: |
+          python3 - <<'PY'
+          import json
+
+          # 401/403 = 站点还在,只是要认证/有门槛 → 可达但受限,不算失败
+          GATED = {'401', '403'}
+          OK = {str(c) for c in range(200, 400)}
+
+          ok, gated, failed = [], [], []
+          with open('.linkcheck/results.tsv', encoding='utf-8') as fh:
+              for line in fh:
+                  parts = line.rstrip('\n').split('\t')
+                  if len(parts) != 3:
+                      continue
+                  name, url, code = parts
+                  item = {'name': name, 'url': url, 'status': code}
+                  if code in OK:
+                      ok.append(item)
+                  elif code in GATED:
+                      gated.append(item)
+                  else:
+                      failed.append(item)
+
+          report = {'total': len(ok) + len(gated) + len(failed),
+                    'ok': len(ok), 'gated': len(gated), 'failed': len(failed),
+                    'gated_list': gated, 'failed_list': failed}
+          with open('.linkcheck/report.json', 'w', encoding='utf-8') as fh:
+              json.dump(report, fh, ensure_ascii=False, indent=2)
+
+          print(f"可达 {len(ok)} / 需认证 {len(gated)} / 失败 {len(failed)}")
+          for item in failed:
+              print(f"  失败 {item['status']} {item['name']} {item['url']}")
+          PY
+          failed=$(python3 -c "import json;print(json.load(open('.linkcheck/report.json'))['failed'])")
+          if [ "$failed" = "0" ]; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 上传报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: link-check-report
+          path: .linkcheck/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 失败时开/更新 issue
+        if: steps.summary.outputs.failed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const runId = context.runId;
+
+            const report = JSON.parse(fs.readFileSync('.linkcheck/report.json', 'utf8'));
+            const failed = report.failed_list || [];
+            const gated = report.gated_list || [];
+
+            const title = '[定时链接检查] 官方入口失效';
+            const body = [
+              `链接检查(${runId})发现 ${failed.length} 个「官方入口」无法访问。`,
+              '',
+              '**这个 issue 由定时任务自动创建/更新,不会自动修改 `data/source_inventory.csv`**',
+              '(上游抖动很常见,自动改源清单会把仓库改脏)。请人工确认后再改。',
+              '',
+              '### 无法访问',
+              ...failed.map(i => `- \`${i.name}\` → HTTP ${i.status} — ${i.url}`),
+              '',
+              `### 需要认证(可达但受限,不算失败):${gated.length} 个`,
+              ...gated.slice(0, 20).map(i => `- \`${i.name}\` → HTTP ${i.status} — ${i.url}`),
+              '',
+              `Run: https://github.com/${owner}/${repo}/actions/runs/${runId}`,
+              '完整报告见本次运行的 artifact:`link-check-report`',
+            ].join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 100,
+            });
+            const existing = issues.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.update({
+                owner, repo, issue_number: existing.number, body,
+              });
+              core.info(`已更新 issue #${existing.number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner, repo, title, body,
+              });
+              core.info(`已创建 issue #${created.number}`);
+            }

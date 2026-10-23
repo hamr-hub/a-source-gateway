@@ -1,0 +1,253 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: 数据文件校验
+        run: python -m a_source_gateway.cli validate
+      - name: ruff
+        run: python -m ruff check python/src python/tests scripts
+      - name: mypy
+        run: python -m mypy python/src
+      - name: 单元测试
+        run: python -m pytest
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装构建依赖
+        run: |
+          python -m pip install --upgrade pip build twine
+      - name: 构建
+        run: python -m build
+      - name: 校验产物
+        run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 依赖漏洞扫描
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit || exit 1
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 凭据扫描
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Go 网关 ──────────────────────────────────────────────────────────
+  go:
+    name: Go 网关(build / vet / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          # gateway/ 只用标准库,没有 go.sum,setup-go 的依赖缓存用不上,
+          # 所以关掉它,自己缓存 Go 编译缓存(下面)。
+          cache: false
+      - name: 缓存 Go 编译缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          # 缓存键带上 gateway/ —— 代码变了缓存就失效
+          key: ${{ runner.os }}-go-${{ hashFiles('gateway/go.mod') }}-${{ hashFiles('gateway/**/*.go') }}
+          restore-keys: ${{ runner.os }}-go-
+      - name: 构建
+        run: go build ./...
+      - name: 静态检查
+        run: go vet ./...
+      - name: 单元测试
+        run: go test ./...
+
+  # ── 注册表 parity(Python 与 Go 必须构建出同一份注册表)──────────────
+  parity:
+    name: 注册表 parity(Python vs Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      - name: 安装 Python 包
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: 导出 Python 注册表
+        run: python -m a_source_gateway.cli build-registry --out registry.python.json
+      - name: 导出 Go 注册表
+        run: cd gateway && go run ./cmd/gateway registry-dump -o ../registry.go.json
+      - name: 比对注册表
+        run: |
+          python - registry.python.json registry.go.json <<'PY'
+          import json
+          import sys
+
+          # 易变字段:生成时间、链接探测时间、探测到的状态码。
+          # 这些每次构建都可能不同,比对时忽略。
+          VOLATILE = {"generated_at", "link_checked_at", "link_status"}
+
+          def strip(obj):
+              if isinstance(obj, dict):
+                  return {k: strip(v) for k, v in obj.items() if k not in VOLATILE}
+              if isinstance(obj, list):
+                  return [strip(i) for i in obj]
+              return obj
+
+          def firstdiff(x, y, path=""):
+              """返回第一处差异的路径,便于一眼看出是哪个字段对不上。"""
+              if isinstance(x, dict) and isinstance(y, dict):
+                  for k in sorted(set(x) | set(y)):
+                      if k not in x:
+                          return f"{path}/{k} (只在 Go 里)"
+                      if k not in y:
+                          return f"{path}/{k} (只在 Python 里)"
+                      d = firstdiff(x[k], y[k], f"{path}/{k}")
+                      if d:
+                          return d
+                  return ""
+              if isinstance(x, list) and isinstance(y, list):
+                  if len(x) != len(y):
+                      return f"{path} (长度不同 py={len(x)} go={len(y)})"
+                  for i, (p, q) in enumerate(zip(x, y)):
+                      d = firstdiff(p, q, f"{path}[{i}]")
+                      if d:
+                          return d
+                  return ""
+              if x != y:
+                  return f"{path}: py={x!r:.100} go={y!r:.100}"
+              return ""
+
+          py_path, go_path = sys.argv[1], sys.argv[2]
+          py = strip(json.load(open(py_path, encoding="utf-8")))
+          go = strip(json.load(open(go_path, encoding="utf-8")))
+
+          if py == go:
+              print("注册表一致:Python 与 Go 构建结果相同")
+              sys.exit(0)
+
+          print("::error::注册表不一致(Python vs Go)", file=sys.stderr)
+          if py.get("count") != go.get("count"):
+              print(f"  count: py={py.get('count')} go={go.get('count')}", file=sys.stderr)
+          py_src = {s["id"]: s for s in py.get("sources", [])}
+          go_src = {s["id"]: s for s in go.get("sources", [])}
+          only_py = sorted(set(py_src) - set(go_src))
+          only_go = sorted(set(go_src) - set(py_src))
+          if only_py:
+              print(f"  只在 Python 里的源: {only_py}", file=sys.stderr)
+          if only_go:
+              print(f"  只在 Go 里的源: {only_go}", file=sys.stderr)
+          diff = [i for i in sorted(set(py_src) & set(go_src)) if py_src[i] != go_src[i]]
+          print(f"  差异源({len(diff)}): {', '.join(diff[:10])}", file=sys.stderr)
+          for sid in diff[:5]:
+              print(f"  [{sid}] {firstdiff(py_src[sid], go_src[sid])}", file=sys.stderr)
+          sys.exit(1)
+          PY
+      - name: 上传两份注册表(便于排查)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry-parity
+          path: |
+            registry.python.json
+            registry.go.json
+
+  # ── 容器镜像 ────────────────────────────────────────────────────────
+  docker:
+    name: 容器镜像
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: 判断是否推送
+        id: meta
+        run: |
+          push=false
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            if [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              push=true
+            fi
+          fi
+          echo "push=$push" >> "$GITHUB_OUTPUT"
+          echo "ref_name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - name: 登录 GHCR
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 构建镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ steps.meta.outputs.push == 'true' }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.title=a-source-gateway
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

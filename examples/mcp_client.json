@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "a-source-gateway": {
+      "command": "a-source-gateway-mcp",
+      "args": [],
+      "env": {
+        "A_GATEWAY_CONTACT": "you@example.com"
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# CODEOWNERS — 代码归属
+#
+# 维护者 >= 2 是项目治理的硬要求(见 GOVERNANCE.md §2)。
+# 目前只有一位维护者,下面的 @hamr-hub 是唯一 owner;新增维护者时请在此追加,
+# 并同步更新 GOVERNANCE.md 与 CONTRIBUTING.md。
+#
+# 路径相对于仓库根目录。
+
+# ── 默认:所有文件都需要 owner 审阅 ──────────────────────────────
+*                       @hamr-hub
+
+# ── 合规与法律(改动必须由维护者本人审阅) ────────────────────────
+/NOTICE                 @hamr-hub
+/LICENSE                @hamr-hub
+/SECURITY.md            @hamr-hub
+/CODE_OF_CONDUCT.md     @hamr-hub
+/GOVERNANCE.md          @hamr-hub
+
+# ── 元数据事实源(改动需要真实请求证据) ──────────────────────────
+/data/                  @hamr-hub
+/docs/adding-a-source.md @hamr-hub
+/docs/agent-playbook.md  @hamr-hub
+
+# ── 接入工具链(改动会影响"智能体加源"这条主路径) ────────────────
+/scripts/               @hamr-hub
+/AGENTS.md              @hamr-hub
+/CLAUDE.md              @hamr-hub
+
+# ── 网关与解析面 ────────────────────────────────────────────────
+/gateway/               @hamr-hub
+/src/                   @hamr-hub
+
+# ── 部署与 CI ───────────────────────────────────────────────────
+/Dockerfile             @hamr-hub
+/docker-compose.yml     @hamr-hub
+/deploy/                @hamr-hub
+/.github/workflows/     @hamr-hub

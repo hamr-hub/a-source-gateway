@@ -1,0 +1,310 @@
+{
+  "version": "1.0",
+  "aliases": {
+    "SEC EDGAR": [
+      "sec",
+      "edgar",
+      "sec_edgar"
+    ],
+    "SEC IAPD / Form ADV": [
+      "iapd",
+      "formadv"
+    ],
+    "SEC Form D": [
+      "formd"
+    ],
+    "FINRA BrokerCheck": [
+      "finra",
+      "brokercheck"
+    ],
+    "FDIC BankFind": [
+      "fdic",
+      "bankfind"
+    ],
+    "FFIEC NIC (Call Report)": [
+      "ffiec",
+      "callreport"
+    ],
+    "NCUA 信用合作社": [
+      "ncua"
+    ],
+    "UK FCA Register": [
+      "fca"
+    ],
+    "Bank of England PRA 数据库": [
+      "boe",
+      "pra"
+    ],
+    "ESMA 各类登记册": [
+      "esma"
+    ],
+    "EBA 登记册": [
+      "eba"
+    ],
+    "UK Companies House": [
+      "ch",
+      "companieshouse",
+      "chhouse"
+    ],
+    "GLEIF LEI": [
+      "gleif",
+      "lei"
+    ],
+    "SAM.gov 实体注册与排除名单": [
+      "sam",
+      "samgov"
+    ],
+    "FARA 外国代理人登记": [
+      "fara"
+    ],
+    "OFAC SDN": [
+      "ofac",
+      "sdn"
+    ],
+    "OFAC Consolidated / SSI / DTC 清单": [
+      "ofac_consolidated",
+      "ssi"
+    ],
+    "EU 金融制裁综合名单 (FSF)": [
+      "eu_sanctions",
+      "fsf"
+    ],
+    "UK OFSI 综合名单": [
+      "ofsi"
+    ],
+    "UN 安理会综合名单": [
+      "unsc",
+      "un_sanctions"
+    ],
+    "World Bank 禁入名单": [
+      "wb_debarred"
+    ],
+    "BIS Entity List / DPL / UVL": [
+      "bis",
+      "entitylist"
+    ],
+    "OpenSanctions": [
+      "opensanctions"
+    ],
+    "ClinicalTrials.gov v2": [
+      "ctgov",
+      "ctg",
+      "clinicaltrials",
+      "nct"
+    ],
+    "CTIS 欧盟临床试验信息系统": [
+      "ctis"
+    ],
+    "ISRCTN / ChiCTR / UMIN / ANZCTR": [
+      "isrctn",
+      "chictr"
+    ],
+    "openFDA": [
+      "fda",
+      "openfda"
+    ],
+    "WHO GHO / GHED / ICTRP": [
+      "who",
+      "gho"
+    ],
+    "PatentsView": [
+      "patentsview"
+    ],
+    "USPTO 批量数据 (bulkdata/PEDS/Assignment)": [
+      "uspto",
+      "bulkdata"
+    ],
+    "EPO OPS": [
+      "ops",
+      "epo"
+    ],
+    "WIPO Patentscope / Global Brand Database / Madrid Monitor": [
+      "wipo"
+    ],
+    "OpenAlex": [
+      "openalex",
+      "oa"
+    ],
+    "Crossref": [
+      "crossref",
+      "doi"
+    ],
+    "arXiv": [
+      "arxiv"
+    ],
+    "PubMed E-utilities": [
+      "pubmed",
+      "ncbi"
+    ],
+    "Europe PMC": [
+      "epmc"
+    ],
+    "DOAJ / DOAB / OpenAIRE": [
+      "doaj"
+    ],
+    "DataCite": [
+      "datacite"
+    ],
+    "ORCID": [
+      "orcid"
+    ],
+    "Unpaywall": [
+      "unpaywall"
+    ],
+    "Semantic Scholar": [
+      "s2",
+      "semanticscholar"
+    ],
+    "Eurostat": [
+      "eurostat",
+      "eurostat_eu"
+    ],
+    "World Bank Open Data / WDI / WGI": [
+      "wb",
+      "worldbank",
+      "wdi"
+    ],
+    "FRED / ALFRED": [
+      "fred",
+      "alfred"
+    ],
+    "UN Comtrade": [
+      "comtrade"
+    ],
+    "ECB Data Portal": [
+      "ecb"
+    ],
+    "IMF IFS / BIS / OECD SDMX": [
+      "imf",
+      "oecd_sdmx"
+    ],
+    "WTO WITS / TRAINS": [
+      "wto",
+      "wits"
+    ],
+    "US Census International Trade API": [
+      "census"
+    ],
+    "US Federal Register API": [
+      "federalregister",
+      "fr"
+    ],
+    "CourtListener / RECAP": [
+      "courtlistener",
+      "recap"
+    ],
+    "Congress.gov / GovInfo": [
+      "congress",
+      "govinfo"
+    ],
+    "EUR-Lex / CELLAR / 欧洲议会与理事会": [
+      "eurlex",
+      "cellar"
+    ],
+    "legislation.gov.uk / The National Archives": [
+      "legislation_uk"
+    ],
+    "EIA API": [
+      "eia"
+    ],
+    "EPA Envirofacts": [
+      "epa"
+    ],
+    "USGS 水文与地震服务": [
+      "usgs"
+    ],
+    "中国证监会 公开信息": [
+      "csrc",
+      "证监会"
+    ],
+    "中国基金业协会 私募公示": [
+      "amac",
+      "基金业协会"
+    ],
+    "NOAA / NCEI / HURDAT / IBTrACS": [
+      "noaa"
+    ],
+    "NASA Earthdata / CMR": [
+      "nasa"
+    ],
+    "GBIF": [
+      "gbif"
+    ],
+    "Wikidata / Wikimedia dumps": [
+      "wikidata",
+      "wikimedia"
+    ],
+    "HMLR Price Paid Data": [
+      "hmlr",
+      "landregistry",
+      "ppd"
+    ],
+    "BLS 公共数据 API": [
+      "bls",
+      "laborstats",
+      "bls_api"
+    ],
+    "CFTC 公开报告数据": [
+      "cftc",
+      "cot",
+      "cftc_public"
+    ],
+    "Statistics Canada WDS": [
+      "statcan",
+      "statcan_wds",
+      "canada_stats"
+    ],
+    "UK ONS Open Data API": [
+      "ons",
+      "uk_ons",
+      "ons_uk"
+    ],
+    "USAspending.gov 联邦支出公开": [
+      "usaspending",
+      "usaspending_gov",
+      "usaspendinggov",
+      "联邦支出"
+    ],
+    "Regulations.gov 规则制定与公众评论": [
+      "regulations",
+      "regulations_gov",
+      "regulationsgov",
+      "法规评论"
+    ],
+    "CFPB 消费者投诉数据库": [
+      "cfpb",
+      "complaints",
+      "consumerfinance",
+      "cfpb_complaints"
+    ],
+    "College Scorecard 院校数据": [
+      "collegescorecard",
+      "scorecard",
+      "college_scorecard"
+    ],
+    "日本 EDINET 有価証券報告書": [
+      "edinet",
+      "edinet_fsa",
+      "fsa_japan",
+      "有価証券報告書"
+    ],
+    "韩国 DART 电子披露": [
+      "dart",
+      "dart_fss",
+      "opendart",
+      "dart_kr"
+    ],
+    "日本 e-Stat 政府统计": [
+      "estat",
+      "e_stat",
+      "japan_stats",
+      "estat_jp"
+    ],
+    "US Census Bureau API (ACS/人口普查)": [
+      "census_api",
+      "acs",
+      "census_bureau",
+      "census_acs"
+    ]
+  }
+}

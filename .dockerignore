@@ -1,0 +1,51 @@
+# 构建上下文裁剪:只保留 Dockerfile 真正 COPY 的东西
+# (pyproject.toml / README.md / LICENSE / NOTICE / python/src / data / gateway / deploy/docker)
+
+# ── 版本控制与 CI ──
+.git
+.gitignore
+.github
+.claude
+
+# ── Python 虚拟环境与构建产物 ──
+.venv
+venv
+env
+dist
+build
+*.egg-info
+**/__pycache__
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# ── 各类缓存 ──
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.python-version
+
+# ── 本地产物 ──
+bench-report.json
+.sre-scratch
+.parity
+registry.json
+*.log
+
+# ── 文档与示例(不参与镜像构建)──
+docs
+examples
+CONTRIBUTING.md
+GOVERNANCE.md
+SECURITY.md
+CODE_OF_CONDUCT.md
+CHANGELOG.md
+AGENTS.md
+CLAUDE.md
+Makefile
+docker-compose.yml
+
+# deploy/ 整体保留:Dockerfile 只 COPY deploy/docker/healthcheck.py,
+# 但目录体积很小,不做精细排除 —— 排除父目录再 ! 回来依赖 Docker 的目录剪枝规则,
+# 不如整目录留着稳。

@@ -1,0 +1,52 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.1051/epjconf/s20130018002",
+    "ISBN": ["978-2-7598-1018-7"],
+    "ISSN": ["2100-014X"],
+    "URL": "http://dx.doi.org/10.1051/epjconf/s20130018002",
+    "author": [
+      {"given": "T. V.", "family": "Massard", "ORCID": ["0000-0002-4653-0111"]}
+    ],
+    "container-title": ["EPJ Web of Conferences"],
+    "created": {"date-time": "2020-03-04T12:00:00Z", "date-parts": [[2020, 3, 4]]},
+    "deposited": {"date-time": "2020-03-04T12:00:00Z"},
+    "indexed": {"date-time": "2026-10-22T00:00:00Z"},
+    "issued": {"date-parts": [[2020, 3]]},
+    "language": "en",
+    "license": [{"URL": "http://creativecommons.org/licenses/by-nc/4.0"}],
+    "page": "20002",
+    "publisher": "EDP Sciences",
+    "reference-count": 12,
+    "references-count": 12,
+    "title": ["A mass of results"],
+    "type": "proceedings-article",
+    "volume": "249",
+    "score": 1.25,
+    "link": [
+      {"URL": "https://doi.org/10.1051/epjconf/s20130018002", "content-type": "application/pdf"}
+    ],
+    "items": [
+      {
+        "DOI": "10.1051/epjconf/s20130018002",
+        "title": ["A mass of results"],
+        "author": [{"given": "T. V.", "family": "Massard"}],
+        "container-title": ["EPJ Web of Conferences"],
+        "published-print": {"date-parts": [[2020, 3, 4]]},
+        "created": {"date-time": "2020-03-04T12:00:00Z"},
+        "page": "20002",
+        "publisher": "EDP Sciences",
+        "type": "proceedings-article",
+        "volume": "249",
+        "issue": "249",
+        "language": "en",
+        "reference-count": 12,
+        "is-referenced-by-count": 3,
+        "score": 1.25
+      }
+    ],
+    "total-results": 187948954
+  }
+}

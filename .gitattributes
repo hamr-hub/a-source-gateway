@@ -1,0 +1,26 @@
+# .gitattributes - 行尾与文件属性约定
+#
+# 关键: data/ 下的 CSV 用 CRLF 行尾, 而且这一点是**契约**的一部分 ——
+# scaffold_source.py 的 --apply 承诺"老行一个字节都没动(含 CRLF 与引号)",
+# 测试也按 CRLF 断言。如果 git 在提交时把 CRLF 规范化成 LF,
+# 克隆出来的文件就和本地不一样, 那条承诺就不成立了。
+# 所以这里显式把数据文件标成 -text(binary):不做任何行尾转换。
+data/*.csv    -text
+data/*.json   -text
+
+# 脚本与文档统一 LF
+*.sh           text eol=lf
+*.py           text eol=lf
+*.go           text eol=lf
+*.md           text eol=lf
+*.yaml         text eol=lf
+*.yml          text eol=lf
+*.toml         text eol=lf
+Makefile       text eol=lf
+Dockerfile     text eol=lf
+
+# 二进制, 不做 diff 不做转换
+*.png          binary
+*.jpg          binary
+*.gz           binary
+*.tar.gz       binary

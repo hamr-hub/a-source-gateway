@@ -1,0 +1,41 @@
+# 非敏感运行参数。
+# ⚠️ 这里只放"没有它就起不来"和"调错了会影响外部行为"的值。
+#    任何凭据(API key / token)一律走 Secret,绝不写进 ConfigMap。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: a-source-gateway-config
+  labels:
+    app.kubernetes.io/name: a-source-gateway
+    app.kubernetes.io/component: gateway
+data:
+  # ── 服务 ──
+  A_GATEWAY_HOST: "0.0.0.0"
+  A_GATEWAY_PORT: "8848"
+  # 事实源目录:镜像里已经带了一份(/app/data),这里显式指一次做双保险。
+  A_GATEWAY_DATA_DIR: "/app/data"
+
+  # ── 身份 ──
+  # 强烈建议改成真实的联系邮箱:会拼进 User-Agent,
+  # SEC、OpenAlex 等上游据此识别调用方,不带邮箱 SEC 直接 403。
+  # 这是联系邮箱,不是密钥,所以可以放在 ConfigMap。
+  A_GATEWAY_CONTACT: "you@example.com"
+
+  # ── 预算 ──
+  # 硬承诺:任何一次调用 500ms 内返回,做不到就返回 degraded 而不是挂死。
+  A_GATEWAY_BUDGET_MS: "500"
+  A_GATEWAY_UPSTREAM_BUDGET_MS: "400"
+  A_GATEWAY_RESERVE_MS: "100"
+
+  # ── 缓存 ──
+  # 缓存是进程内的(in-process),不落盘、不跨副本共享。
+  # 每个 Pod 各有一份缓存,滚动更新后新 Pod 是冷缓存。
+  A_GATEWAY_CACHE_ENTRIES: "512"
+  A_GATEWAY_CACHE_BYTES: "33554432"
+  A_GATEWAY_CACHE_TTL_S: "900"
+  A_GATEWAY_PREWARM: "1"
+
+  # ── 行为 ──
+  # auto = 有 Python 就用 Python 解析面,否则回落 Go 解析器
+  A_GATEWAY_PARSER: "auto"
+  A_GATEWAY_OFFLINE: "0"

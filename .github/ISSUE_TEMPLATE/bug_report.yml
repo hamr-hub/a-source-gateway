@@ -1,0 +1,37 @@
+name: Bug 报告
+description: 报告网关行为与预期不符的问题
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      placeholder: "a-source-gateway 1.0.0 / Python 3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 期望行为 vs 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 请求体、命令或最小代码
+      render: bash
+    validations:
+      required: true
+  - type: textarea
+    id: envelope
+    attributes:
+      label: 信封的 meta 段
+      description: 贴出响应里的 meta 部分(可去掉敏感信息)
+      render: json
+  - type: input
+    id: contact
+    attributes:
+      label: 联系方式
+      description: 可选。便于追问细节

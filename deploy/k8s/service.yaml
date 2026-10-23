@@ -1,0 +1,18 @@
+# 集群内服务。只暴露 ClusterIP:网关是对内提供元数据索引与实时查询代理,
+# 对外暴露交给 Ingress / Gateway,不要直接给公网。
+apiVersion: v1
+kind: Service
+metadata:
+  name: a-source-gateway
+  labels:
+    app.kubernetes.io/name: a-source-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: a-source-gateway
+  ports:
+    - name: http
+      port: 8848
+      targetPort: http
+      protocol: TCP

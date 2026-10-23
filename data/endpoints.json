@@ -1,0 +1,5068 @@
+{
+  "$schema": "./endpoints.schema.json",
+  "version": "1.0",
+  "sources": {
+    "SEC EDGAR": [
+      {
+        "id": "submissions",
+        "name": "公司申报记录",
+        "url_template": "https://data.sec.gov/submissions/CIK{cik}.json",
+        "params": [
+          {
+            "name": "cik",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "pattern": "^\\d{10}$",
+            "example": "0000320193",
+            "desc": "零填充 10 位 CIK"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "filings.recent.accessionNumber",
+          "total_field": null,
+          "fields": [
+            {
+              "name": "name",
+              "type": "string",
+              "desc": "公司名"
+            },
+            {
+              "name": "cik",
+              "type": "string",
+              "desc": "CIK"
+            },
+            {
+              "name": "sicDescription",
+              "type": "string",
+              "desc": "SIC 行业描述"
+            },
+            {
+              "name": "filings.recent.accessionNumber",
+              "type": "array",
+              "desc": "近期申报号"
+            }
+          ],
+          "notes": "recent 最多 1000 条;更早记录走 filings.files 分片(单文件分片)"
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "companyfacts",
+        "name": "XBRL 财报指标全集",
+        "url_template": "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json",
+        "params": [
+          {
+            "name": "cik",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "pattern": "^\\d{10}$",
+            "example": "0000320193",
+            "desc": "零填充 10 位 CIK"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "facts",
+          "fields": [
+            {
+              "name": "facts",
+              "type": "object",
+              "desc": "按 us-gaap 分类的全部 XBRL 事实"
+            }
+          ],
+          "notes": "facts 是按 taxonomy 分类的对象而非数字;总量需自行统计各 us-gaap 项",
+          "total_field": "facts"
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "company_tickers",
+        "name": "ticker→CIK 对照表",
+        "url_template": "https://www.sec.gov/files/company_tickers.json",
+        "response": {
+          "shape": "object",
+          "item_path": null,
+          "item_shape": "map",
+          "fields": [
+            {
+              "name": "ticker",
+              "type": "string"
+            },
+            {
+              "name": "cik_str",
+              "type": "int"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            }
+          ],
+          "notes": "顶层是 {序号: 记录} 的字典, 网关按 item_shape=map 取值域"
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "fulltext_search",
+        "name": "申报文件全文检索",
+        "url_template": "https://efts.sec.gov/LATEST/search-index?q={q}&startdt={startdt}&enddt={enddt}",
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "artificial intelligence"
+          },
+          {
+            "name": "startdt",
+            "in": "query",
+            "type": "string",
+            "example": "2026-10-01"
+          },
+          {
+            "name": "enddt",
+            "in": "query",
+            "type": "string",
+            "example": "2026-10-21"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "hits.hits",
+          "total_field": "hits.total.value",
+          "fields": [
+            {
+              "name": "hits.hits",
+              "type": "array",
+              "desc": "命中文档"
+            },
+            {
+              "name": "hits.total.value",
+              "type": "int",
+              "desc": "命中总数"
+            }
+          ]
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "UK Companies House": [
+      {
+        "id": "company",
+        "name": "公司档案",
+        "url_template": "https://api.company-information.service.gov.uk/company/{number}",
+        "params": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "0000320193",
+            "desc": "8 位公司编号"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "fields": [
+            {
+              "name": "company_name",
+              "type": "string"
+            },
+            {
+              "name": "company_status",
+              "type": "string"
+            },
+            {
+              "name": "incorporation_date",
+              "type": "string"
+            },
+            {
+              "name": "sic_codes",
+              "type": "array"
+            },
+            {
+              "name": "registered_office_address",
+              "type": "object"
+            }
+          ]
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "filing_history",
+        "name": "申报历史",
+        "url_template": "https://api.company-information.service.gov.uk/company/{number}/filing-history",
+        "params": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "0000320193"
+          },
+          {
+            "name": "start_index",
+            "in": "query",
+            "type": "int",
+            "default": 0
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "items",
+          "total_field": "total_items",
+          "fields": [
+            {
+              "name": "items",
+              "type": "array"
+            },
+            {
+              "name": "total_items",
+              "type": "int"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "GLEIF LEI": [
+      {
+        "id": "lei_records",
+        "name": "LEI 记录检索",
+        "url_template": "https://api.gleif.org/api/v1/lei-records?page%5Bsize%5D={size}&page%5Bnumber%5D={page}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10,
+            "desc": "每页条数(最大 200)"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "default": 1
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "meta.pagination.total",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array"
+            },
+            {
+              "name": "meta.pagination.total",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 3469322 条"
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "lei_record",
+        "name": "单个 LEI 详情",
+        "url_template": "https://api.gleif.org/api/v1/lei-records/{lei}",
+        "params": [
+          {
+            "name": "lei",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "5493001KJTIIGC8Y1R12"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "fields": [
+            {
+              "name": "data.attributes.lei",
+              "type": "string"
+            },
+            {
+              "name": "data.attributes.entity.legalName.name",
+              "type": "string"
+            },
+            {
+              "name": "data.relationships.directParent",
+              "type": "object"
+            },
+            {
+              "name": "data.relationships.ultimateParent",
+              "type": "object"
+            }
+          ]
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "relationship_records",
+        "name": "母子关系",
+        "url_template": "https://api.gleif.org/api/v1/relationship-records?page%5Bsize%5D={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "meta.pagination.total",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array"
+            },
+            {
+              "name": "data.attributes",
+              "type": "object"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "OFAC SDN": [
+      {
+        "id": "sdn_xml",
+        "name": "SDN 名单 XML",
+        "url_template": "https://www.treasury.gov/ofac/downloads/sdn.xml",
+        "response": {
+          "shape": "xml",
+          "media_type": "application/xml",
+          "fields": [
+            {
+              "name": "sdnEntry",
+              "type": "array",
+              "desc": "19,471 个实体"
+            },
+            {
+              "name": "sdnEntry/addr",
+              "type": "array",
+              "desc": "地址(一对多需展开)"
+            },
+            {
+              "name": "sdnEntry/AKA",
+              "type": "array",
+              "desc": "别名"
+            },
+            {
+              "name": "sdnEntry/IDList",
+              "type": "object",
+              "desc": "证件号"
+            }
+          ],
+          "notes": "29.2MB;网关只做摘要不整体透传"
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "sdn_csv",
+        "name": "SDN 名单 CSV",
+        "url_template": "https://www.treasury.gov/ofac/downloads/sdn.csv",
+        "response": {
+          "shape": "csv",
+          "media_type": "text/csv",
+          "fields": [
+            {
+              "name": "ent_num",
+              "type": "int"
+            },
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "SDN_Type",
+              "type": "string"
+            },
+            {
+              "name": "alt_names",
+              "type": "string"
+            },
+            {
+              "name": "addresses",
+              "type": "string"
+            },
+            {
+              "name": "ids",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "ClinicalTrials.gov v2": [
+      {
+        "id": "studies",
+        "name": "临床试验检索",
+        "url_template": "https://clinicaltrials.gov/api/v2/studies?pageSize={size}&countTotal=true&query.term={term}",
+        "params": [
+          {
+            "name": "term",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "AREA[LastUpdatePostDate]RANGE[2026-10-01,MAX]",
+            "desc": "area 名必须是 LastUpdatePostDate"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "studies",
+          "total_field": "totalCount",
+          "fields": [
+            {
+              "name": "studies",
+              "type": "array"
+            },
+            {
+              "name": "totalCount",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 608,228 项"
+        },
+        "cache_ttl_s": 900
+      }
+    ],
+    "OpenAlex": [
+      {
+        "id": "works",
+        "name": "论文检索",
+        "page_size": 10,
+        "url_template": "https://api.openalex.org/works?filter={filter}&per-page={size}&mailto={email}",
+        "params": [
+          {
+            "name": "filter",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "from_publication_date:2026-09-22",
+            "desc": "注意 from_created_date 需付费计划"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "type": "string",
+            "example": "you@example.com"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "meta.count",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "meta.count",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 328,367,407 篇"
+        },
+        "cache_ttl_s": 1800
+      },
+      {
+        "id": "work",
+        "name": "单篇论文",
+        "url_template": "https://api.openalex.org/works/{id}",
+        "params": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "W2741809807"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "doi",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "publication_year",
+              "type": "int"
+            },
+            {
+              "name": "cited_by_count",
+              "type": "int"
+            },
+            {
+              "name": "authorships",
+              "type": "array"
+            },
+            {
+              "name": "primary_location.source.display_name",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "Crossref": [
+      {
+        "id": "works",
+        "name": "DOI 检索",
+        "url_template": "https://api.crossref.org/works?filter={filter}&rows={size}&mailto={email}",
+        "params": [
+          {
+            "name": "filter",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "from-index-date:2026-10-21",
+            "desc": "created=新增, index=变更(量约 10 倍)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "message.items",
+          "total_field": "message.total-results",
+          "fields": [
+            {
+              "name": "message.items",
+              "type": "array"
+            },
+            {
+              "name": "message.total-results",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 187,910,966 条"
+        },
+        "cache_ttl_s": 900,
+        "page_size": 10
+      }
+    ],
+    "arXiv": [
+      {
+        "id": "query",
+        "name": "预印本检索",
+        "url_template": "https://export.arxiv.org/api/query?search_query={q}&start={start}&max_results={size}",
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "all:electron"
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "type": "int",
+            "default": 0
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10,
+            "desc": "官方限速 1 次/3 秒"
+          }
+        ],
+        "response": {
+          "shape": "xml",
+          "media_type": "application/atom+xml",
+          "fields": [
+            {
+              "name": "entry",
+              "type": "array",
+              "desc": "预印本条目"
+            },
+            {
+              "name": "entry.title",
+              "type": "string"
+            },
+            {
+              "name": "entry.author",
+              "type": "array"
+            },
+            {
+              "name": "entry.published",
+              "type": "string"
+            }
+          ],
+          "notes": "实测 all:electron 187,897 条"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "PubMed E-utilities": [
+      {
+        "id": "esearch",
+        "name": "文献检索",
+        "url_template": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={term}&retmax={size}&retmode=json",
+        "params": [
+          {
+            "name": "term",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "short drama"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 20
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "esearchresult.idlist",
+          "total_field": "esearchresult.count",
+          "fields": [
+            {
+              "name": "esearchresult.idlist",
+              "type": "array"
+            },
+            {
+              "name": "esearchresult.count",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 41,313,583 条;限速 3/s(有 key 10/s)"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "Europe PMC": [
+      {
+        "id": "search",
+        "name": "文献检索",
+        "url_template": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query={query}&format=json&pageSize={size}",
+        "params": [
+          {
+            "name": "query",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "*"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 25
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "resultList.result",
+          "total_field": "hitCount",
+          "fields": [
+            {
+              "name": "resultList.result",
+              "type": "array"
+            },
+            {
+              "name": "hitCount",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 49,111,254 条"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "DataCite": [
+      {
+        "id": "dois",
+        "name": "数据集 DOI 检索",
+        "url_template": "https://api.datacite.org/dois?page%5Bsize%5D={size}&query={query}",
+        "params": [
+          {
+            "name": "query",
+            "in": "query",
+            "type": "string",
+            "default": "",
+            "example": "types.resourceTypeGeneral:Text"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "meta.total",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array"
+            },
+            {
+              "name": "meta.total",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 139,743,943 个"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "ORCID": [
+      {
+        "id": "expanded_search",
+        "name": "研究者检索",
+        "page_size": 10,
+        "headers": {
+          "Accept": "application/json"
+        },
+        "url_template": "https://pub.orcid.org/v3.0/expanded-search/?q={q}&rows={size}",
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "default": "*"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "expanded-result",
+          "total_field": "num-found",
+          "fields": [
+            {
+              "name": "expanded-result",
+              "type": "array"
+            },
+            {
+              "name": "num-found",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 30,219,387 位研究者"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "DOAJ / DOAB / OpenAIRE": [
+      {
+        "id": "articles",
+        "name": "开放获取文章检索",
+        "url_template": "https://doaj.org/api/search/articles/{query}?pageSize={size}",
+        "params": [
+          {
+            "name": "query",
+            "in": "path",
+            "type": "string",
+            "default": "*"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "total",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "total",
+              "type": "int"
+            }
+          ],
+          "notes": "实测 13,827,558 篇"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "Semantic Scholar": [
+      {
+        "id": "paper_search",
+        "name": "论文检索",
+        "page_size": 10,
+        "url_template": "https://api.semanticscholar.org/graph/v1/paper/search?query={query}&limit={size}",
+        "params": [
+          {
+            "name": "query",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "biology"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "total",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array"
+            },
+            {
+              "name": "data[].paperId",
+              "type": "string"
+            },
+            {
+              "name": "data[].title",
+              "type": "string"
+            },
+            {
+              "name": "data[].year",
+              "type": "int"
+            },
+            {
+              "name": "data[].citationCount",
+              "type": "int"
+            }
+          ],
+          "notes": "未授权常返回 429;建议申请免费 key"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "Eurostat": [
+      {
+        "id": "dataset",
+        "name": "统计表取数(JSON-stat)",
+        "url_template": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{code}?lang=EN",
+        "params": [
+          {
+            "name": "code",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "demo_pjan"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "value",
+          "fields": [
+            {
+              "name": "value",
+              "type": "object",
+              "desc": "维度键→取值"
+            },
+            {
+              "name": "id",
+              "type": "array"
+            },
+            {
+              "name": "size",
+              "type": "array"
+            },
+            {
+              "name": "dimension",
+              "type": "object"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "toc",
+        "name": "目录(表/数据集清单 + 更新时间 + 取值数)",
+        "url_template": "https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en",
+        "response": {
+          "shape": "tsv",
+          "media_type": "text/tab-separated-values",
+          "fields": [
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "code",
+              "type": "string"
+            },
+            {
+              "name": "type",
+              "type": "string"
+            },
+            {
+              "name": "last-update",
+              "type": "string"
+            },
+            {
+              "name": "data start",
+              "type": "string"
+            },
+            {
+              "name": "data end",
+              "type": "string"
+            },
+            {
+              "name": "values",
+              "type": "int"
+            }
+          ],
+          "notes": "TSV;网关 total 为实际解析到的行数(正文上限 2MB、最多 15000 行)"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "World Bank Open Data / WDI / WGI": [
+      {
+        "id": "indicator",
+        "name": "指标列表",
+        "url_template": "https://api.worldbank.org/v2/indicator?format=json&per_page={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "1",
+          "total_field": "0.total",
+          "fields": [
+            {
+              "name": "1",
+              "type": "array"
+            },
+            {
+              "name": "0.total",
+              "type": "int"
+            }
+          ],
+          "notes": "实测全库 29,544 个指标"
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "country_indicator",
+        "name": "国别指标",
+        "url_template": "https://api.worldbank.org/v2/country/{country}/indicator/{indicator}?format=json&per_page={size}",
+        "params": [
+          {
+            "name": "country",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "CHN"
+          },
+          {
+            "name": "indicator",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "NY.GDP.MKTP.CD"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 50
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "1",
+          "fields": [
+            {
+              "name": "1",
+              "type": "array"
+            },
+            {
+              "name": "1[].countryiso3code",
+              "type": "string"
+            },
+            {
+              "name": "1[].date",
+              "type": "string"
+            },
+            {
+              "name": "1[].value",
+              "type": "number"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "FRED / ALFRED": [
+      {
+        "id": "series_csv",
+        "name": "序列 CSV",
+        "url_template": "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}",
+        "params": [
+          {
+            "name": "id",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "GNPCA"
+          }
+        ],
+        "response": {
+          "shape": "csv",
+          "media_type": "text/csv",
+          "fields": [
+            {
+              "name": "observation_date",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "notes": "多 id 返回的是 ZIP 而非 CSV,需解包"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "UN Comtrade": [
+      {
+        "id": "preview",
+        "name": "双边贸易预览",
+        "url_template": "https://comtradeapi.un.org/public/v1/preview/C/A/HS?reporterCode={reporter}&period={period}&cmdCode={cmd}",
+        "params": [
+          {
+            "name": "reporter",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "156"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "2023"
+          },
+          {
+            "name": "cmd",
+            "in": "query",
+            "type": "string",
+            "default": "TOTAL"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "count",
+          "notes": "预览层单查询上限 500 条;全量须走年度预置文件",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array"
+            },
+            {
+              "name": "data[].period",
+              "type": "string"
+            },
+            {
+              "name": "data[].reporterDesc",
+              "type": "string"
+            },
+            {
+              "name": "data[].partnerDesc",
+              "type": "string"
+            },
+            {
+              "name": "data[].cmdCode",
+              "type": "string"
+            },
+            {
+              "name": "data[].primaryValue",
+              "type": "number"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "ECB Data Portal": [
+      {
+        "id": "series_csv",
+        "name": "SDMX 序列 CSV",
+        "url_template": "https://data-api.ecb.europa.eu/service/data/{series}?format=csvdata",
+        "params": [
+          {
+            "name": "series",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "EXR/D.USD.EUR.SP00.A",
+            "desc": "斜杠路径"
+          }
+        ],
+        "response": {
+          "shape": "csv",
+          "media_type": "text/csv",
+          "fields": [
+            {
+              "name": "TIME_PERIOD",
+              "type": "string"
+            },
+            {
+              "name": "OBS_VALUE",
+              "type": "float"
+            },
+            {
+              "name": "FREQ",
+              "type": "string"
+            },
+            {
+              "name": "CURRENCY",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "openFDA": [
+      {
+        "id": "drug_label",
+        "name": "药品标签",
+        "url_template": "https://api.fda.gov/drug/label.json?limit={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "meta.results.total",
+          "notes": "实测 262,900 条",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "results[].openfda.generic_name",
+              "type": "array"
+            },
+            {
+              "name": "results[].indications_and_usage",
+              "type": "string"
+            },
+            {
+              "name": "results[].warnings",
+              "type": "array"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "device_510k",
+        "name": "510(k) 器械",
+        "url_template": "https://api.fda.gov/device/510k.json?limit={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "meta.results.total",
+          "notes": "实测 176,415 条",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "results[].device_name",
+              "type": "string"
+            },
+            {
+              "name": "results[].k_number",
+              "type": "string"
+            },
+            {
+              "name": "results[].decision_date",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "food_enforcement",
+        "name": "食品执法",
+        "url_template": "https://api.fda.gov/food/enforcement.json?limit={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "meta.results.total",
+          "notes": "实测 29,505 条",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "results[].recalling_firm",
+              "type": "string"
+            },
+            {
+              "name": "results[].product_description",
+              "type": "string"
+            },
+            {
+              "name": "results[].reason_for_recall",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "GBIF": [
+      {
+        "id": "species_search",
+        "name": "物种检索",
+        "url_template": "https://api.gbif.org/v1/species/search?q={q}&limit={size}",
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "count",
+          "notes": "实测 48,872,261 个分类单元",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "results[].key",
+              "type": "int"
+            },
+            {
+              "name": "results[].scientificName",
+              "type": "string"
+            },
+            {
+              "name": "results[].canonicalName",
+              "type": "string"
+            },
+            {
+              "name": "results[].taxonomicStatus",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "NASA Earthdata / CMR": [
+      {
+        "id": "collections",
+        "name": "数据集集合检索",
+        "method": "GET",
+        "url_template": "https://cmr.earthdata.nasa.gov/search/collections.json?page_size={size}&keyword={keyword}",
+        "page_size": 20,
+        "params": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "",
+            "example": "rain"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "default": 20,
+            "example": 10
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "feed.entry",
+          "fields": [
+            {
+              "name": "feed.entry[].id",
+              "type": "string",
+              "desc": "集合短名"
+            },
+            {
+              "name": "feed.entry[].title",
+              "type": "string"
+            },
+            {
+              "name": "feed.entry[].dataset_id",
+              "type": "string"
+            },
+            {
+              "name": "feed.entry[].summary",
+              "type": "string"
+            }
+          ],
+          "notes": "CMR 检索;该响应不带总数(需用 keyword 检索页统计)"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "WHO GHO / GHED / ICTRP": [
+      {
+        "id": "indicator",
+        "name": "健康指标列表",
+        "url_template": "https://ghoapi.azureedge.net/api/Indicator?$top={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "value",
+          "fields": [
+            {
+              "name": "value",
+              "type": "array"
+            },
+            {
+              "name": "value[].IndicatorCode",
+              "type": "string"
+            }
+          ],
+          "notes": "实测 3,102 个指标",
+          "total_field": "@odata.count"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "US Federal Register API": [
+      {
+        "id": "documents",
+        "name": "联邦公报文档检索",
+        "url_template": "https://www.federalregister.gov/api/v1/documents.json?per_page={size}&conditions[term]={q}",
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 20
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "count",
+          "notes": "count 封顶 10000,需按日期分段",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "results[].document_number",
+              "type": "string"
+            },
+            {
+              "name": "results[].title",
+              "type": "string"
+            },
+            {
+              "name": "results[].type",
+              "type": "string"
+            },
+            {
+              "name": "results[].publication_date",
+              "type": "string"
+            },
+            {
+              "name": "results[].html_url",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "CourtListener / RECAP": [
+      {
+        "id": "opinions",
+        "name": "法院意见检索",
+        "url_template": "https://www.courtlistener.com/api/rest/v4/opinions/?format=json&type=o",
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "count",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array"
+            },
+            {
+              "name": "results[].caseName",
+              "type": "string"
+            },
+            {
+              "name": "results[].dateFiled",
+              "type": "string"
+            },
+            {
+              "name": "results[].citation",
+              "type": "string"
+            },
+            {
+              "name": "results[].absolute_url",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600,
+        "notes": "API v3/v4 均需认证(401)"
+      }
+    ],
+    "US Census International Trade API": [
+      {
+        "id": "population",
+        "name": "县人口",
+        "method": "GET",
+        "url_template": "https://api.census.gov/data/2023/pep/population?get=NAME,POP&for=county:*&key={api_key}",
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "example": "",
+            "desc": "免费 key;小流量可不带"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "array",
+          "notes": "顶层是数组;不带 key 时返回 Missing Key 页面(非 JSON)"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "BIS Entity List / DPL / UVL": [
+      {
+        "id": "consolidated_csv",
+        "name": "综合筛查清单 CSV",
+        "url_template": "https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.csv",
+        "response": {
+          "shape": "csv",
+          "media_type": "text/csv",
+          "fields": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "source",
+              "type": "string"
+            },
+            {
+              "name": "addresses",
+              "type": "string"
+            },
+            {
+              "name": "ids",
+              "type": "string"
+            }
+          ],
+          "notes": "实测 26,174 行"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "UN 安理会综合名单": [
+      {
+        "id": "consolidated_xml",
+        "name": "综合名单 XML",
+        "url_template": "https://main.un.org/securitycouncil/sites/default/files/consolidated.xml",
+        "response": {
+          "shape": "xml",
+          "media_type": "application/xml",
+          "fields": [
+            {
+              "name": "INDIVIDUAL",
+              "type": "array",
+              "desc": "个人条目"
+            },
+            {
+              "name": "ENTITY",
+              "type": "array",
+              "desc": "实体条目"
+            },
+            {
+              "name": "INDIVIDUAL_ALIAS",
+              "type": "array",
+              "desc": "别名"
+            }
+          ],
+          "notes": "实测 2,489 行"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "World Bank 禁入名单": [
+      {
+        "id": "sanctioned_firm",
+        "name": "被禁企业",
+        "url_template": "https://apigwext.worldbank.org/dvsvc/v1.0/json/APPLICATION/ADOBE_EXPERIENCE_MANAGER/FIRM/SANCTIONED_FIRM?$top={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 10
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "records",
+          "fields": [
+            {
+              "name": "records",
+              "type": "array"
+            },
+            {
+              "name": "records[].TotalAmount",
+              "type": "string"
+            },
+            {
+              "name": "records[].FirmName",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600,
+        "notes": "需认证(401)"
+      }
+    ],
+    "Wikidata / Wikimedia dumps": [
+      {
+        "id": "sparql_count",
+        "name": "三元组计数",
+        "url_template": "https://query.wikidata.org/sparql?format=json&query={query}",
+        "params": [
+          {
+            "name": "query",
+            "in": "query",
+            "type": "string",
+            "default": "SELECT (COUNT(*) AS ?c) WHERE {?s ?p ?o}",
+            "desc": "须 URL 编码"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results.bindings",
+          "fields": [
+            {
+              "name": "results.bindings",
+              "type": "array"
+            },
+            {
+              "name": "results.bindings[].c.value",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 86400,
+        "notes": "实测 9,011,130,327 条三元组"
+      }
+    ],
+    "USGS 水文与地震服务": [
+      {
+        "id": "sites",
+        "name": "水文站点",
+        "url_template": "https://waterservices.usgs.gov/nwis/site/?format=rss&siteStatus=all",
+        "response": {
+          "shape": "xml",
+          "media_type": "application/rss+xml",
+          "fields": [
+            {
+              "name": "item",
+              "type": "array",
+              "desc": "RSS 条目"
+            },
+            {
+              "name": "item.title",
+              "type": "string"
+            },
+            {
+              "name": "item.description",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "Unpaywall": [
+      {
+        "id": "doi",
+        "name": "OA 全文位置",
+        "url_template": "https://api.unpaywall.org/v2/{doi}?email={email}",
+        "params": [
+          {
+            "name": "doi",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "10.1038/nature12373"
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "you@example.com"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "fields": [
+            {
+              "name": "doi",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "is_oa",
+              "type": "bool"
+            },
+            {
+              "name": "oa_status",
+              "type": "string"
+            },
+            {
+              "name": "best_oa_location.url_for_pdf",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "Congress.gov / GovInfo": [
+      {
+        "id": "bill",
+        "name": "议案检索",
+        "url_template": "https://api.congress.gov/v3/bill?format=json&limit={size}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 20
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "bills",
+          "fields": [
+            {
+              "name": "bills",
+              "type": "array"
+            },
+            {
+              "name": "bills[].number",
+              "type": "string"
+            },
+            {
+              "name": "bills[].title",
+              "type": "string"
+            },
+            {
+              "name": "bills[].latestAction.date",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600,
+        "notes": "需免费 key"
+      }
+    ],
+    "HMLR Price Paid Data": [
+      {
+        "id": "monthly_csv",
+        "name": "月度成交增量 CSV",
+        "url_template": "http://prod.publicdata.landregistry.gov.uk.s3-website-eu-west-1.amazonaws.com/pp-monthly-update-new-version.csv",
+        "response": {
+          "shape": "csv",
+          "media_type": "text/csv",
+          "fields": [
+            {
+              "name": "transaction_id",
+              "type": "string",
+              "desc": "第 1 列 GUID"
+            },
+            {
+              "name": "price_paid",
+              "type": "int",
+              "desc": "第 2 列"
+            },
+            {
+              "name": "transfer_date",
+              "type": "string",
+              "desc": "第 3 列"
+            }
+          ],
+          "notes": "15.84MB / 90,866 笔;无表头,首行即数据"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "FDIC BankFind": [
+      {
+        "id": "institutions",
+        "name": "受监管机构列表",
+        "method": "GET",
+        "url_template": "https://banks.data.fdic.gov/api/institutions?limit={size}&offset={offset}",
+        "page_size": 100,
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "default": 100,
+            "example": 20,
+            "desc": "每页条数"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "default": 0,
+            "example": 0,
+            "desc": "偏移"
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "NAME,CITY,STALP,ACTIVE",
+            "example": "NAME,CITY,STALP",
+            "desc": "返回字段(逗号分隔)"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "meta.total",
+          "fields": [
+            {
+              "name": "meta.total",
+              "type": "int",
+              "desc": "机构总数(实测 27835)"
+            },
+            {
+              "name": "data[].NAME",
+              "type": "string",
+              "desc": "机构名"
+            },
+            {
+              "name": "data[].CITY",
+              "type": "string"
+            },
+            {
+              "name": "data[].STALP",
+              "type": "string",
+              "desc": "州缩写"
+            },
+            {
+              "name": "data[].ACTIVE",
+              "type": "int",
+              "desc": "是否在营"
+            }
+          ],
+          "notes": "实测 27835 家;搜索型端点的 data[] 元素会被包成 {data:{...},score:...}"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "EIA API": [
+      {
+        "id": "series",
+        "name": "能源时间序列",
+        "method": "GET",
+        "url_template": "https://api.eia.gov/v2/{path}/data/?api_key={api_key}&length={size}",
+        "page_size": 100,
+        "params": [
+          {
+            "name": "path",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "petroleum/pri/spt",
+            "desc": "路由路径(见 EIA v2 文档)"
+          },
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "DEMO_KEY",
+            "desc": "免费 key;DEMO_KEY 仅供试调"
+          },
+          {
+            "name": "frequency",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "monthly",
+            "example": "monthly",
+            "desc": "频率"
+          },
+          {
+            "name": "data[0]",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "value",
+            "example": "value",
+            "desc": "要取的列"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "default": 100,
+            "example": 20,
+            "desc": "返回条数"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "response.data",
+          "total_field": "response.total",
+          "fields": [
+            {
+              "name": "response.total",
+              "type": "int",
+              "desc": "观测总数"
+            },
+            {
+              "name": "response.data[].period",
+              "type": "string",
+              "desc": "观测期"
+            },
+            {
+              "name": "response.data[].value",
+              "type": "number",
+              "desc": "观测值"
+            },
+            {
+              "name": "response.data[].area-name",
+              "type": "string"
+            }
+          ],
+          "notes": "EIA v2;实测响应 total 4398"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "Copernicus / ESA": [
+      {
+        "id": "products",
+        "name": "产品检索(OData)",
+        "method": "GET",
+        "url_template": "https://catalogue.dataspace.copernicus.eu/odata/v1/Products?$top={size}&$filter=contains(Name,'{q}')",
+        "page_size": 20,
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "",
+            "example": "Sentinel-2"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "default": 20,
+            "example": 10
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "value",
+          "fields": [
+            {
+              "name": "value[].Id",
+              "type": "string"
+            },
+            {
+              "name": "value[].Name",
+              "type": "string"
+            },
+            {
+              "name": "value[].ContentType",
+              "type": "string"
+            },
+            {
+              "name": "value[].OriginDate",
+              "type": "string"
+            },
+            {
+              "name": "value[].Online",
+              "type": "bool"
+            }
+          ],
+          "notes": "OData;用 @odata.nextLink 翻页"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "Google Patents": [
+      {
+        "id": "search",
+        "name": "专利检索",
+        "method": "GET",
+        "url_template": "https://patents.google.com/xhr/query?url=q%3D{q}&exp=",
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "graphene"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "results.cluster",
+          "total_field": "results.total_num_results",
+          "fields": [
+            {
+              "name": "results.total_num_results",
+              "type": "int",
+              "desc": "命中总数"
+            },
+            {
+              "name": "results.cluster[].patent",
+              "type": "object",
+              "desc": "专利条目"
+            },
+            {
+              "name": "results.cluster[].result",
+              "type": "object",
+              "desc": "标题/摘要片段"
+            }
+          ],
+          "notes": "非官方聚合(基于各局公开数据);q 需 URL 编码"
+        },
+        "cache_ttl_s": 1800
+      }
+    ],
+    "IMF IFS / BIS / OECD SDMX": [
+      {
+        "id": "datamapper",
+        "name": "IMF Datamapper 指标",
+        "method": "GET",
+        "url_template": "https://www.imf.org/external/datamapper/api/v1/{indicator}",
+        "params": [
+          {
+            "name": "indicator",
+            "in": "path",
+            "type": "string",
+            "required": true,
+            "example": "NGDP_RPCH",
+            "desc": "指标码"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "values",
+          "fields": [
+            {
+              "name": "values",
+              "type": "object",
+              "desc": "指标→国家→年份→值"
+            },
+            {
+              "name": "api",
+              "type": "object",
+              "desc": "接口元信息"
+            }
+          ],
+          "notes": "values 形如 {指标:{国家:{年份:值}}};总数字段在嵌套里, 网关不抽 total"
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "oecd_sdmx",
+        "name": "OECD SDMX 数据流",
+        "method": "GET",
+        "url_template": "https://sdmx.oecd.org/public/rest/dataflow/OECD.SDD.STES?format=sdmx-json",
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "notes": "OECD SDMX;具体取数用 /public/rest/data/{flow}/{key}.csv"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "OpenSanctions": [
+      {
+        "id": "entities",
+        "name": "实体数据集(JSON Lines)",
+        "method": "GET",
+        "url_template": "https://data.opensanctions.org/datasets/latest/default/entities.ftm.json",
+        "response": {
+          "media_type": "application/json",
+          "shape": "jsonl",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "desc": "实体 ID"
+            },
+            {
+              "name": "caption",
+              "type": "string",
+              "desc": "名称"
+            },
+            {
+              "name": "schema",
+              "type": "string",
+              "desc": "实体类型"
+            },
+            {
+              "name": "datasets",
+              "type": "array",
+              "desc": "所属数据集"
+            },
+            {
+              "name": "first_seen",
+              "type": "string"
+            },
+            {
+              "name": "last_seen",
+              "type": "string"
+            }
+          ],
+          "notes": "JSON Lines: 每行一个实体;文件很大(百万级), 网关会标记 response_too_large 并提示直连, 不整体透传"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "EUR-Lex / CELLAR / 欧洲议会与理事会": [
+      {
+        "id": "sparql",
+        "name": "Cellar SPARQL 检索",
+        "method": "GET",
+        "url_template": "https://publications.europa.eu/webapi/rdf/sparql?query={query}&format=application%2Fsparql-results%2Bjson",
+        "params": [
+          {
+            "name": "query",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "SELECT * WHERE {?s ?p ?o} LIMIT 10",
+            "desc": "SPARQL;须 URL 编码"
+          }
+        ],
+        "response": {
+          "media_type": "application/sparql-results+json",
+          "shape": "object",
+          "item_path": "results.bindings",
+          "fields": [
+            {
+              "name": "head.vars",
+              "type": "array",
+              "desc": "变量名"
+            },
+            {
+              "name": "results.bindings",
+              "type": "array",
+              "desc": "结果行"
+            },
+            {
+              "name": "results.bindings[].value",
+              "type": "string"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "OFAC Consolidated / SSI / DTC 清单": [
+      {
+        "id": "cons_xml",
+        "name": "综合制裁名单 XML",
+        "method": "GET",
+        "url_template": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/CONS.XML",
+        "response": {
+          "media_type": "application/xml",
+          "shape": "xml",
+          "fields": [
+            {
+              "name": "sdnEntry",
+              "type": "array",
+              "desc": "实体条目"
+            },
+            {
+              "name": "sdnEntry/addr",
+              "type": "array"
+            },
+            {
+              "name": "sdnEntry/AKA",
+              "type": "array"
+            }
+          ],
+          "notes": "文件型大响应, 网关会标记 response_too_large 并提示直连"
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "dtc_xml",
+        "name": "DTC 名单 XML",
+        "method": "GET",
+        "url_template": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/DTC.XML",
+        "response": {
+          "media_type": "application/xml",
+          "shape": "xml",
+          "notes": "文件型大响应, 同上"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "中国证监会 公开信息": [
+      {
+        "id": "entry",
+        "name": "官方入口(通用)",
+        "method": "GET",
+        "url_template": "http://www.csrc.gov.cn/",
+        "response": {
+          "shape": "object",
+          "media_type": "*/*",
+          "fields": [],
+          "notes": "通用透传端点(官方入口直取);结构随官方文件而定, 建议先取该源的专用端点"
+        }
+      }
+    ],
+    "中国基金业协会 私募公示": [
+      {
+        "id": "entry",
+        "name": "官方入口(通用)",
+        "method": "GET",
+        "url_template": "https://gs.amac.org.cn/",
+        "response": {
+          "shape": "object",
+          "media_type": "*/*",
+          "fields": [],
+          "notes": "通用透传端点(官方入口直取);结构随官方文件而定, 建议先取该源的专用端点"
+        }
+      }
+    ],
+    "BLS 公共数据 API": [
+      {
+        "id": "series_data",
+        "name": "单序列查询(v1 GET,固定最近 3 年)",
+        "method": "GET",
+        "url_template": "https://api.bls.gov/publicAPI/v1/timeseries/data/{series_id}",
+        "params": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_#-]+$",
+            "example": "LNS14000000",
+            "desc": "BLS 序列号(官方序列目录 https://download.bls.gov/pub/time.series/)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "Results.series",
+          "total_field": null,
+          "fields": [
+            {
+              "name": "Results.series",
+              "type": "array",
+              "desc": "序列数组(单序列请求时长度 1)"
+            },
+            {
+              "name": "Results.series[].seriesID",
+              "type": "string",
+              "desc": "序列号"
+            },
+            {
+              "name": "Results.series[].data",
+              "type": "array",
+              "desc": "观测点数组;实测每个元素含 year / period / periodName / value / latest / footnotes 六个键"
+            }
+          ],
+          "notes": "实测 LNS14000000(2026-10-23):Results.series 长度 1,series[0].data 长度 33(2024-01~2026-09,月度)。v1 GET 忽略 startyear/endyear——实测传 startyear=2020&endyear=2020 仍返回同样 33 点(2024-2026),官方 v1 签名文档口径为 'retrieve data for a single time series for the past three years'。响应中无总数字段,故不声明 total_field;要按年取历史请用 series_range(v2 GET)。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 2000
+      },
+      {
+        "id": "series_range",
+        "name": "单序列按年份区间查询(v2 GET)",
+        "method": "GET",
+        "url_template": "https://api.bls.gov/publicAPI/v2/timeseries/data/{series_id}?startyear={startyear}&endyear={endyear}",
+        "params": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_#-]+$",
+            "example": "LNS14000000",
+            "desc": "BLS 序列号"
+          },
+          {
+            "name": "startyear",
+            "in": "query",
+            "type": "int",
+            "default": 2020,
+            "desc": "起始年 YYYY"
+          },
+          {
+            "name": "endyear",
+            "in": "query",
+            "type": "int",
+            "default": 2021,
+            "desc": "结束年 YYYY"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "Results.series",
+          "total_field": null,
+          "fields": [
+            {
+              "name": "Results.series",
+              "type": "array",
+              "desc": "序列数组(单序列请求时长度 1)"
+            },
+            {
+              "name": "Results.series[].seriesID",
+              "type": "string",
+              "desc": "序列号"
+            },
+            {
+              "name": "Results.series[].data",
+              "type": "array",
+              "desc": "观测点数组;实测每个元素含 year / period / periodName / value / latest / footnotes 六个键"
+            }
+          ],
+          "notes": "实测 startyear=2020&endyear=2021 且不带注册 key:HTTP 200,Results.series 长度 1,series[0].data 长度 24(2020-01~2021-12,月度),首点 {\"year\":\"2021\",\"period\":\"M12\",...},末点 {\"year\":\"2020\",\"period\":\"M01\",...}。v2 基本单序列查询实测无 key 即可用(catalog/calculations/annualaverage/aspects 等扩展能力官方要求注册 key);未注册按官方 25 次/日、10 年/次 计额度。该区间响应中无 latest 标记。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 2000
+      },
+      {
+        "id": "series_latest",
+        "name": "单序列最新期次探针(v2 GET latest=true)",
+        "method": "GET",
+        "url_template": "https://api.bls.gov/publicAPI/v2/timeseries/data/{series_id}?latest={latest}",
+        "params": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_#-]+$",
+            "example": "LNS14000000",
+            "desc": "BLS 序列号"
+          },
+          {
+            "name": "latest",
+            "in": "query",
+            "type": "string",
+            "default": "true",
+            "desc": "官方 latest 开关,取该序列最新 1 个观测点"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "Results.series",
+          "total_field": null,
+          "fields": [
+            {
+              "name": "Results.series",
+              "type": "array",
+              "desc": "序列数组(单序列请求时长度 1)"
+            },
+            {
+              "name": "Results.series[].seriesID",
+              "type": "string",
+              "desc": "序列号"
+            },
+            {
+              "name": "Results.series[].data",
+              "type": "array",
+              "desc": "观测点数组;实测每个元素含 year / period / periodName / value / latest / footnotes 六个键"
+            }
+          ],
+          "notes": "实测 HTTP 200 / 226B:Results.series 长度 1,series[0].data 长度 1,该点为 {\"year\":\"2026\",\"period\":\"M09\",\"periodName\":\"September\",\"latest\":\"true\",\"value\":\"4.2\",...}。实测不带注册 key 亦返回 REQUEST_SUCCEEDED(官方 v2 签名文档列有 'Latest Series Data' GET 签名)。适合做增量探针:每个新期次新增 1 个点。响应中无总数字段,故不声明 total_field。"
+        },
+        "cache_ttl_s": 1800,
+        "budget_ms": 2000
+      }
+    ],
+    "CFTC 公开报告数据": [
+      {
+        "id": "cot_disaggregated_combined",
+        "name": "持仓周报-分类口径(Disaggregated Combined)",
+        "method": "GET",
+        "url_template": "https://publicreporting.cftc.gov/resource/kh3c-gbw2.json?$limit={rows}&$offset={offset}",
+        "params": [
+          {
+            "name": "rows",
+            "in": "query",
+            "type": "int",
+            "default": 100,
+            "desc": "Socrata $limit(网关按端点 page_size 统一改写;该站不认 $rows,实测报 Unrecognized arguments [$rows])"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "desc": "Socrata $offset 偏移量,翻页用(实测 $offset=60000 仍正常返回)"
+          }
+        ],
+        "response": {
+          "shape": "array",
+          "item_path": null,
+          "total_field": null,
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "desc": "行主键(期次+合约编码)"
+            },
+            {
+              "name": "market_and_exchange_names",
+              "type": "string",
+              "desc": "市场与交易所名"
+            },
+            {
+              "name": "contract_market_name",
+              "type": "string",
+              "desc": "合约市场名"
+            },
+            {
+              "name": "report_date_as_yyyy_mm_dd",
+              "type": "string",
+              "desc": "报告期(周二),形如 2026-10-13T00:00:00.000,增量字段"
+            },
+            {
+              "name": "yyyy_report_week_ww",
+              "type": "string",
+              "desc": "报告周编号,如 2026 Report Week 41"
+            },
+            {
+              "name": "cftc_contract_market_code",
+              "type": "string",
+              "desc": "CFTC 合约市场代码"
+            },
+            {
+              "name": "cftc_market_code",
+              "type": "string",
+              "desc": "市场代码(CBT/NYME 等)"
+            },
+            {
+              "name": "cftc_region_code",
+              "type": "string",
+              "desc": "地区代码"
+            },
+            {
+              "name": "cftc_commodity_code",
+              "type": "string",
+              "desc": "商品代码"
+            },
+            {
+              "name": "commodity_name",
+              "type": "string",
+              "desc": "商品名称"
+            },
+            {
+              "name": "open_interest_all",
+              "type": "string",
+              "desc": "总未平仓合约(字符串)"
+            },
+            {
+              "name": "tot_rept_positions_long_all",
+              "type": "string",
+              "desc": "报告交易者多头合计"
+            },
+            {
+              "name": "tot_rept_positions_short",
+              "type": "string",
+              "desc": "报告交易者空头合计"
+            },
+            {
+              "name": "nonrept_positions_long_all",
+              "type": "string",
+              "desc": "非报告交易者多头"
+            },
+            {
+              "name": "nonrept_positions_short_all",
+              "type": "string",
+              "desc": "非报告交易者空头"
+            }
+          ],
+          "notes": "Socrata SODA 3.0,响应根即数组(实测 $limit=1 返回 1 个对象),故不声明 item_path;网关按 payload 原样投影。实测 $select=count(*) = 192313 条;报告期覆盖 2006-06-13~2026-10-13。实测所有数值字段在 JSON 里都是字符串(如 \"open_interest_all\":\"597861\"),$select=count(*) 亦返回字符串 \"192313\",没有可解析成数字的总数字段,故不声明 total_field。实测 $limit/$offset/$where/$order 均可用(实测 $limit=2&$offset=0 返回 2 行;实测 $offset=60000 仍正常返回 2019 年数据);该站不认 $rows(实测 HTTP 400 Unrecognized arguments [$rows]),故端点用 $limit。$where/$order 由调用方以额外参数传入(网关会把 $ 编码为 %24,实测 %24where 正常生效)。"
+        },
+        "page_size": 50,
+        "cache_ttl_s": 3600,
+        "budget_ms": 6000,
+        "notes": "Socrata 数组直返;50 行约 330KB(网关响应体上限 1MB);增量用 $where=report_date_as_yyyy_mm_dd>='上期' + $order + $offset 翻页"
+      },
+      {
+        "id": "cot_legacy",
+        "name": "持仓周报-传统口径(Legacy)",
+        "method": "GET",
+        "url_template": "https://publicreporting.cftc.gov/resource/srt6-5q2f.json?$limit={rows}&$offset={offset}",
+        "params": [
+          {
+            "name": "rows",
+            "in": "query",
+            "type": "int",
+            "default": 100,
+            "desc": "Socrata $limit(网关按端点 page_size 统一改写;该站不认 $rows,实测报 Unrecognized arguments [$rows])"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "desc": "Socrata $offset 偏移量,翻页用(实测 $offset=60000 仍正常返回)"
+          }
+        ],
+        "response": {
+          "shape": "array",
+          "item_path": null,
+          "total_field": null,
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "desc": "行主键(期次+合约编码)"
+            },
+            {
+              "name": "market_and_exchange_names",
+              "type": "string",
+              "desc": "市场与交易所名"
+            },
+            {
+              "name": "contract_market_name",
+              "type": "string",
+              "desc": "合约市场名"
+            },
+            {
+              "name": "report_date_as_yyyy_mm_dd",
+              "type": "string",
+              "desc": "报告期(周二),形如 2026-10-13T00:00:00.000,增量字段"
+            },
+            {
+              "name": "yyyy_report_week_ww",
+              "type": "string",
+              "desc": "报告周编号,如 2026 Report Week 41"
+            },
+            {
+              "name": "cftc_contract_market_code",
+              "type": "string",
+              "desc": "CFTC 合约市场代码"
+            },
+            {
+              "name": "cftc_market_code",
+              "type": "string",
+              "desc": "市场代码(CBT/NYME 等)"
+            },
+            {
+              "name": "cftc_region_code",
+              "type": "string",
+              "desc": "地区代码"
+            },
+            {
+              "name": "cftc_commodity_code",
+              "type": "string",
+              "desc": "商品代码"
+            },
+            {
+              "name": "commodity_name",
+              "type": "string",
+              "desc": "商品名称"
+            },
+            {
+              "name": "open_interest_all",
+              "type": "string",
+              "desc": "总未平仓合约(字符串)"
+            },
+            {
+              "name": "tot_rept_positions_long_all",
+              "type": "string",
+              "desc": "报告交易者多头合计"
+            },
+            {
+              "name": "tot_rept_positions_short",
+              "type": "string",
+              "desc": "报告交易者空头合计"
+            },
+            {
+              "name": "nonrept_positions_long_all",
+              "type": "string",
+              "desc": "非报告交易者多头"
+            },
+            {
+              "name": "nonrept_positions_short_all",
+              "type": "string",
+              "desc": "非报告交易者空头"
+            }
+          ],
+          "notes": "Socrata SODA 3.0,响应根即数组,不声明 item_path。实测 $select=count(*) = 570724 条。字段与 kh3c-gbw2 同族(实测 $limit=1 首行含 id/market_and_exchange_names/report_date_as_yyyy_mm_dd/yyyy_report_week_ww 等)。"
+        },
+        "page_size": 50,
+        "cache_ttl_s": 3600,
+        "budget_ms": 6000,
+        "notes": "Socrata 数组直返;50 行约 330KB(网关响应体上限 1MB);增量用 $where=report_date_as_yyyy_mm_dd>='上期' + $order + $offset 翻页"
+      },
+      {
+        "id": "cot_tff",
+        "name": "持仓周报-金融期货交易者(TFF)",
+        "method": "GET",
+        "url_template": "https://publicreporting.cftc.gov/resource/udgc-27he.json?$limit={rows}&$offset={offset}",
+        "params": [
+          {
+            "name": "rows",
+            "in": "query",
+            "type": "int",
+            "default": 100,
+            "desc": "Socrata $limit(网关按端点 page_size 统一改写;该站不认 $rows,实测报 Unrecognized arguments [$rows])"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "desc": "Socrata $offset 偏移量,翻页用(实测 $offset=60000 仍正常返回)"
+          }
+        ],
+        "response": {
+          "shape": "array",
+          "item_path": null,
+          "total_field": null,
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "desc": "行主键(期次+合约编码)"
+            },
+            {
+              "name": "market_and_exchange_names",
+              "type": "string",
+              "desc": "市场与交易所名"
+            },
+            {
+              "name": "contract_market_name",
+              "type": "string",
+              "desc": "合约市场名"
+            },
+            {
+              "name": "report_date_as_yyyy_mm_dd",
+              "type": "string",
+              "desc": "报告期(周二),形如 2026-10-13T00:00:00.000,增量字段"
+            },
+            {
+              "name": "yyyy_report_week_ww",
+              "type": "string",
+              "desc": "报告周编号,如 2026 Report Week 41"
+            },
+            {
+              "name": "cftc_contract_market_code",
+              "type": "string",
+              "desc": "CFTC 合约市场代码"
+            },
+            {
+              "name": "cftc_market_code",
+              "type": "string",
+              "desc": "市场代码(CBT/NYME 等)"
+            },
+            {
+              "name": "cftc_region_code",
+              "type": "string",
+              "desc": "地区代码"
+            },
+            {
+              "name": "cftc_commodity_code",
+              "type": "string",
+              "desc": "商品代码"
+            },
+            {
+              "name": "commodity_name",
+              "type": "string",
+              "desc": "商品名称"
+            },
+            {
+              "name": "open_interest_all",
+              "type": "string",
+              "desc": "总未平仓合约(字符串)"
+            },
+            {
+              "name": "tot_rept_positions_long_all",
+              "type": "string",
+              "desc": "报告交易者多头合计"
+            },
+            {
+              "name": "tot_rept_positions_short",
+              "type": "string",
+              "desc": "报告交易者空头合计"
+            },
+            {
+              "name": "nonrept_positions_long_all",
+              "type": "string",
+              "desc": "非报告交易者多头"
+            },
+            {
+              "name": "nonrept_positions_short_all",
+              "type": "string",
+              "desc": "非报告交易者空头"
+            }
+          ],
+          "notes": "Socrata SODA 3.0,响应根即数组,不声明 item_path。实测 $select=count(*) = 94106 条;覆盖货币/美债等金融合约。"
+        },
+        "page_size": 50,
+        "cache_ttl_s": 3600,
+        "budget_ms": 6000,
+        "notes": "Socrata 数组直返;50 行约 330KB(网关响应体上限 1MB);增量用 $where=report_date_as_yyyy_mm_dd>='上期' + $order + $offset 翻页"
+      },
+      {
+        "id": "cot_cit",
+        "name": "持仓周报-商品指数交易者(CIT)",
+        "method": "GET",
+        "url_template": "https://publicreporting.cftc.gov/resource/j83k-qyrd.json?$limit={rows}&$offset={offset}",
+        "params": [
+          {
+            "name": "rows",
+            "in": "query",
+            "type": "int",
+            "default": 100,
+            "desc": "Socrata $limit(网关按端点 page_size 统一改写;该站不认 $rows,实测报 Unrecognized arguments [$rows])"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "desc": "Socrata $offset 偏移量,翻页用(实测 $offset=60000 仍正常返回)"
+          }
+        ],
+        "response": {
+          "shape": "array",
+          "item_path": null,
+          "total_field": null,
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "desc": "行主键(期次+合约编码)"
+            },
+            {
+              "name": "market_and_exchange_names",
+              "type": "string",
+              "desc": "市场与交易所名"
+            },
+            {
+              "name": "contract_market_name",
+              "type": "string",
+              "desc": "合约市场名"
+            },
+            {
+              "name": "report_date_as_yyyy_mm_dd",
+              "type": "string",
+              "desc": "报告期(周二),形如 2026-10-13T00:00:00.000,增量字段"
+            },
+            {
+              "name": "yyyy_report_week_ww",
+              "type": "string",
+              "desc": "报告周编号,如 2026 Report Week 41"
+            },
+            {
+              "name": "cftc_contract_market_code",
+              "type": "string",
+              "desc": "CFTC 合约市场代码"
+            },
+            {
+              "name": "cftc_market_code",
+              "type": "string",
+              "desc": "市场代码(CBT/NYME 等)"
+            },
+            {
+              "name": "cftc_region_code",
+              "type": "string",
+              "desc": "地区代码"
+            },
+            {
+              "name": "cftc_commodity_code",
+              "type": "string",
+              "desc": "商品代码"
+            },
+            {
+              "name": "commodity_name",
+              "type": "string",
+              "desc": "商品名称"
+            },
+            {
+              "name": "open_interest_all",
+              "type": "string",
+              "desc": "总未平仓合约(字符串)"
+            },
+            {
+              "name": "tot_rept_positions_long_all",
+              "type": "string",
+              "desc": "报告交易者多头合计"
+            },
+            {
+              "name": "tot_rept_positions_short",
+              "type": "string",
+              "desc": "报告交易者空头合计"
+            },
+            {
+              "name": "nonrept_positions_long_all",
+              "type": "string",
+              "desc": "非报告交易者多头"
+            },
+            {
+              "name": "nonrept_positions_short_all",
+              "type": "string",
+              "desc": "非报告交易者空头"
+            }
+          ],
+          "notes": "Socrata SODA 3.0,响应根即数组,不声明 item_path。实测 $select=count(*) = 13727 条。"
+        },
+        "page_size": 50,
+        "cache_ttl_s": 3600,
+        "budget_ms": 6000,
+        "notes": "Socrata 数组直返;50 行约 330KB(网关响应体上限 1MB);增量用 $where=report_date_as_yyyy_mm_dd>='上期' + $order + $offset 翻页"
+      },
+      {
+        "id": "product_hierarchy",
+        "name": "合约-商品分类对照表(Product Hierarchy)",
+        "method": "GET",
+        "url_template": "https://publicreporting.cftc.gov/resource/rj6x-va3z.json?$limit={rows}&$offset={offset}",
+        "params": [
+          {
+            "name": "rows",
+            "in": "query",
+            "type": "int",
+            "default": 100,
+            "desc": "Socrata $limit(网关按端点 page_size 统一改写;该站不认 $rows,实测报 Unrecognized arguments [$rows])"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "desc": "Socrata $offset 偏移量,翻页用(实测 $offset=60000 仍正常返回)"
+          }
+        ],
+        "response": {
+          "shape": "array",
+          "item_path": null,
+          "total_field": null,
+          "fields": [
+            {
+              "name": "contract_market_code",
+              "type": "string",
+              "desc": "合约市场代码"
+            },
+            {
+              "name": "commodity_name",
+              "type": "string",
+              "desc": "商品名称"
+            },
+            {
+              "name": "commodity_subgroup_name",
+              "type": "string",
+              "desc": "商品子组名"
+            },
+            {
+              "name": "commodity_group_name",
+              "type": "string",
+              "desc": "商品大组名"
+            }
+          ],
+          "notes": "Socrata SODA 3.0,响应根即数组,不声明 item_path。实测 $select=count(*) = 31419 条;是 COT 持仓表的维表(合约市场代码 -> 商品名 -> 子组 -> 大组)。"
+        },
+        "page_size": 50,
+        "cache_ttl_s": 3600,
+        "budget_ms": 4000,
+        "notes": "Socrata 数组直返;50 行约 330KB(网关响应体上限 1MB);增量用 $where=report_date_as_yyyy_mm_dd>='上期' + $order + $offset 翻页"
+      }
+    ],
+    "Statistics Canada WDS": [
+      {
+        "id": "changed_cubes",
+        "name": "按日变更立方体清单",
+        "method": "GET",
+        "url_template": "https://www150.statcan.gc.ca/t1/wds/rest/getChangedCubeList/{date}",
+        "params": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "2026-10-01",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "desc": "发布日(ISO YYYY-MM-DD)。官方要求该格式, 传20261001返回406 Wrong date format"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "object",
+          "fields": [
+            {
+              "name": "object[].productId",
+              "type": "int"
+            },
+            {
+              "name": "object[].releaseTime",
+              "type": "string"
+            },
+            {
+              "name": "object[].responseStatusCode",
+              "type": "int"
+            }
+          ],
+          "notes": "增量入口: object 是该日发生变更的立方体数组。实测HTTP 200。计数口径=object数组长度: 2026-10-01=50、10-02=11、10-05=14、10-20=18、10-22=32(每个发布日11-50个)。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "cubes_lite",
+        "name": "全量立方体清单(轻量)",
+        "method": "GET",
+        "url_template": "https://www150.statcan.gc.ca/t1/wds/rest/getAllCubesListLite",
+        "params": [],
+        "response": {
+          "media_type": "application/json",
+          "shape": "array",
+          "fields": [
+            {
+              "name": "productId",
+              "type": "int"
+            },
+            {
+              "name": "cansimId",
+              "type": "string"
+            },
+            {
+              "name": "cubeTitleEn",
+              "type": "string"
+            },
+            {
+              "name": "cubeTitleFr",
+              "type": "string"
+            },
+            {
+              "name": "cubeStartDate",
+              "type": "string"
+            },
+            {
+              "name": "cubeEndDate",
+              "type": "string"
+            },
+            {
+              "name": "releaseTime",
+              "type": "string"
+            },
+            {
+              "name": "frequencyCode",
+              "type": "int"
+            }
+          ],
+          "notes": "全量立方体清单, 重缓存。响应是顶层JSON数组(整包即列表), 故不写item_path。实测HTTP 200, 5046369B, 13.57s, 数组长度8269。注意: 正文4.8MB超过网关默认A_GATEWAY_MAX_BODY_BYTES=1MB, 需调大到>=6MB否则会被截断降级; 13.5s也超过用户请求默认500ms预算, 首次调用会降级并由后台预热器(A_GATEWAY_WARM_BUDGET_MS默认30000)补数。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 15000,
+        "notes": "立方体全量清单: 实测 5,046,369B / 8269 个立方体,超过网关默认 1MB 响应体上限(A_GATEWAY_MAX_BODY_BYTES)且会被验证脚本 4MB 读取上限截断 -> 建议直连上游下载后本地入库;日常增量请用 changed_cubes",
+        "page_size": 1
+      },
+      {
+        "id": "vector_data",
+        "name": "向量时间序列取值(按参考期区间)",
+        "method": "GET",
+        "url_template": "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorByReferencePeriodRange?vectorIds={vector_ids}&startRefPeriod={start_ref_period}&endReferencePeriod={end_reference_period}",
+        "params": [
+          {
+            "name": "vector_ids",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "41690973",
+            "desc": "向量号(整数, 去掉CSV里的v前缀; 官方指南用逗号分隔多个)"
+          },
+          {
+            "name": "start_ref_period",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "2024-01-01",
+            "desc": "起始参考期 YYYY-MM-DD"
+          },
+          {
+            "name": "end_reference_period",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "2026-09-01",
+            "desc": "结束参考期 YYYY-MM-DD; 也可用官方说明里的 endDataPointReleaseDate"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "array",
+          "item_path": "0.object.vectorDataPoint",
+          "fields": [
+            {
+              "name": "refPer",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "name": "decimals",
+              "type": "int"
+            },
+            {
+              "name": "scalarFactorCode",
+              "type": "int"
+            },
+            {
+              "name": "statusCode",
+              "type": "int"
+            },
+            {
+              "name": "releaseTime",
+              "type": "string"
+            },
+            {
+              "name": "frequencyCode",
+              "type": "int"
+            }
+          ],
+          "notes": "顶层是JSON数组, 每个元素形如{status,object}; 本端点按单个向量调用, 数组长度恒为1, item_path指向该元素的vectorDataPoint数据点列表。实测HTTP 200: vectorIds=41690973(表18100004 CPI, 坐标2.2) + 2024-01-01~2026-09-01 → 33个数据点, 7709B, 2.35s, 首点 value=158.3 releaseTime=2024-02-20T08:30。向量号来源: 整表CSV的VECTOR列(如v41690973)。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 8000
+      },
+      {
+        "id": "full_table_csv",
+        "name": "整表CSV下载地址",
+        "method": "GET",
+        "url_template": "https://www150.statcan.gc.ca/t1/wds/rest/getFullTableDownloadCSV/{product_id}/{lang}",
+        "params": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "18100004",
+            "desc": "Product ID(PID, 8位; 旧称CANSIM表号)"
+          },
+          {
+            "name": "lang",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "en",
+            "desc": "语言: en 或 fr"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "object",
+              "type": "string"
+            }
+          ],
+          "notes": "object 是整表CSV zip直链(形如 https://www150.statcan.gc.ca/n1/tbl/csv/{product_id}-eng.zip), 是字符串不是列表, 故不写item_path。实测HTTP 200: 18100004/en → https://www150.statcan.gc.ca/n1/tbl/csv/18100004-eng.zip(该zip实测15336576B, 内含18100004.csv 161295102B + 18100004_MetaData.csv)。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 5000
+      },
+      {
+        "id": "full_table_sdmx",
+        "name": "整表SDMX下载地址",
+        "method": "GET",
+        "url_template": "https://www150.statcan.gc.ca/t1/wds/rest/getFullTableDownloadSDMX/{product_id}",
+        "params": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "18100004",
+            "desc": "Product ID(PID, 8位)"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "object",
+              "type": "string"
+            }
+          ],
+          "notes": "object 是整表SDMX(zip)直链, 字符串不是列表, 故不写item_path。实测HTTP 200: 18100004 → https://www150.statcan.gc.ca/n1/tbl/sdmx/18100004-SDMX.zip。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 5000
+      },
+      {
+        "id": "code_sets",
+        "name": "代码集(标度/频率/符号/状态等)",
+        "method": "GET",
+        "url_template": "https://www150.statcan.gc.ca/t1/wds/rest/getCodeSets",
+        "params": [],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "object.scalar",
+          "fields": [
+            {
+              "name": "object.scalar[].scalarFactorCode",
+              "type": "int"
+            },
+            {
+              "name": "object.scalar[].scalarFactorDescEn",
+              "type": "string"
+            },
+            {
+              "name": "object.scalar[].scalarFactorDescFr",
+              "type": "string"
+            }
+          ],
+          "notes": "解释数据点用: scalarFactorCode 需乘以对应标度(用getCodeSets换算)。item_path 取 object.scalar(10条); 同一 object 下还有 frequency(17)、symbol(3)、status(11)、uom(465)、survey(906)、subject(622)、classificationType(91)、securityLevel(2)、terminated(2)、wdsResponseStatus(9)。实测HTTP 200, 314809B, 7.77s。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 10000
+      }
+    ],
+    "UK ONS Open Data API": [
+      {
+        "id": "datasets",
+        "name": "数据集清单",
+        "method": "GET",
+        "url_template": "https://api.beta.ons.gov.uk/v1/datasets?limit={limit}&offset={offset}",
+        "params": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "example": 20,
+            "default": 20,
+            "desc": "每页条数; 实测100可用(162830B), 再大会超出网关默认1MB正文上限"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "example": 0,
+            "default": 0,
+            "desc": "起始偏移"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "items",
+          "total_field": "total_count",
+          "fields": [
+            {
+              "name": "items[].id",
+              "type": "string"
+            },
+            {
+              "name": "items[].title",
+              "type": "string"
+            },
+            {
+              "name": "items[].description",
+              "type": "string"
+            },
+            {
+              "name": "items[].last_updated",
+              "type": "string"
+            },
+            {
+              "name": "items[].release_frequency",
+              "type": "string"
+            },
+            {
+              "name": "items[].state",
+              "type": "string"
+            },
+            {
+              "name": "items[].next_release",
+              "type": "string"
+            }
+          ],
+          "notes": "实测HTTP 200, 25290B, 2.0s。计数口径: total_count=338(全库数据集数, 与limit无关, limit=1时同样返回338); limit=20时 count=20。items[].last_updated是增量依据。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "dataset_detail",
+        "name": "数据集详情",
+        "method": "GET",
+        "url_template": "https://api.beta.ons.gov.uk/v1/datasets/{dataset_id}",
+        "params": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "wellbeing-quarterly",
+            "desc": "数据集id"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "name": "last_updated",
+              "type": "string"
+            },
+            {
+              "name": "release_frequency",
+              "type": "string"
+            },
+            {
+              "name": "state",
+              "type": "string"
+            },
+            {
+              "name": "next_release",
+              "type": "string"
+            },
+            {
+              "name": "keywords",
+              "type": "array"
+            }
+          ],
+          "notes": "详情是单个对象(主内容不是列表), 故不写item_path; links.latest_version.id 给出当前最新版本号。实测HTTP 200, 1529B, 1.68s: wellbeing-quarterly 的 links.latest_version.href=.../editions/time-series/versions/9。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "editions",
+        "name": "数据集的版本集(editions)",
+        "method": "GET",
+        "url_template": "https://api.beta.ons.gov.uk/v1/datasets/{dataset_id}/editions",
+        "params": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "wellbeing-quarterly",
+            "desc": "数据集id"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "items",
+          "total_field": "total_count",
+          "fields": [
+            {
+              "name": "items[].edition",
+              "type": "string"
+            },
+            {
+              "name": "items[].id",
+              "type": "string"
+            },
+            {
+              "name": "items[].state",
+              "type": "string"
+            }
+          ],
+          "notes": "实测HTTP 200, 607B, 1.58s: wellbeing-quarterly total_count=1, items[0].edition=time-series; items[0].links.latest_version.id=9。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "versions",
+        "name": "某 edition 的版本列表",
+        "method": "GET",
+        "url_template": "https://api.beta.ons.gov.uk/v1/datasets/{dataset_id}/editions/{edition}/versions",
+        "params": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "wellbeing-quarterly",
+            "desc": "数据集id"
+          },
+          {
+            "name": "edition",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "time-series",
+            "desc": "edition名"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "items",
+          "total_field": "total_count",
+          "fields": [
+            {
+              "name": "items[].version",
+              "type": "int"
+            },
+            {
+              "name": "items[].release_date",
+              "type": "string"
+            },
+            {
+              "name": "items[].last_updated",
+              "type": "string"
+            },
+            {
+              "name": "items[].state",
+              "type": "string"
+            }
+          ],
+          "notes": "增量入口: 版本号递增, 新的release_date/last_updated即变更。实测HTTP 200, 23672B, 1.21s: wellbeing-quarterly/time-series total_count=9, 版本1..9, v9 release_date=2023-11-28T00:00:00.000Z。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "version_detail",
+        "name": "版本详情(含维度与下载直链)",
+        "method": "GET",
+        "url_template": "https://api.beta.ons.gov.uk/v1/datasets/{dataset_id}/editions/{edition}/versions/{version}",
+        "params": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "wellbeing-quarterly",
+            "desc": "数据集id"
+          },
+          {
+            "name": "edition",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "time-series",
+            "desc": "edition名"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "type": "int",
+            "example": 9,
+            "desc": "版本号(整数, 会递增; 按/editions或/versions的latest_version更新)"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "dimensions",
+          "fields": [
+            {
+              "name": "dimensions[].id",
+              "type": "string"
+            },
+            {
+              "name": "dimensions[].name",
+              "type": "string"
+            },
+            {
+              "name": "dimensions[].label",
+              "type": "string"
+            },
+            {
+              "name": "dimensions[].href",
+              "type": "string"
+            },
+            {
+              "name": "downloads.csv.href",
+              "type": "string"
+            },
+            {
+              "name": "release_date",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "int"
+            },
+            {
+              "name": "last_updated",
+              "type": "string"
+            }
+          ],
+          "notes": "dimensions 是该版本的维度列表(实测5个: yyyy-qq/uk-only/wellbeing-estimate/measure-of-wellbeing/seasonal-adjustment)。实测HTTP 200, 3005B, 2.17s: v9 的 downloads.csv.href=https://download.ons.gov.uk/downloads/datasets/wellbeing-quarterly/editions/time-series/versions/9.csv。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "version_csv",
+        "name": "版本数据CSV下载",
+        "method": "GET",
+        "url_template": "https://download.ons.gov.uk/downloads/datasets/{dataset_id}/editions/{edition}/versions/{version}.csv",
+        "params": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "wellbeing-quarterly",
+            "desc": "数据集id"
+          },
+          {
+            "name": "edition",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "time-series",
+            "desc": "edition名"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "type": "int",
+            "example": 9,
+            "desc": "版本号(整数, 会递增; 按/editions或/versions的latest_version更新)"
+          }
+        ],
+        "response": {
+          "media_type": "text/csv",
+          "shape": "csv",
+          "fields": [],
+          "notes": "整版数据CSV。实测HTTP 200(经301跳转, 终URL https://static.ons.gov.uk/datasets/wellbeing-quarterly-time-series-v9.csv), 265571B, 1960数据行x13列, 表头 v4_2,LCL,UCL,yyyy-qq,Time,uk-only,Geography,measure-of-wellbeing,MeasureOfWellbeing,wellbeing-estimate,Estimate,seasonal-adjustment,SeasonalAdjustment。CSV解析成二维行数组, 无对象字段可声明, 故 fields 为空且不写item_path。版本号会变, 必须按 latest_version 更新。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 10000
+      }
+    ],
+    "USAspending.gov 联邦支出公开": [
+      {
+        "id": "toptier_agencies",
+        "name": "联邦顶层机构清单(预算与支出概览)",
+        "method": "GET",
+        "url_template": "https://api.usaspending.gov/api/v2/references/toptier_agencies/",
+        "params": [],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "results",
+          "fields": [
+            {
+              "name": "results",
+              "type": "array",
+              "desc": "顶层机构数组"
+            },
+            {
+              "name": "results[].agency_id",
+              "type": "int",
+              "desc": "USAspending 机构主键, 供 references/agency/{agency_id}/ 等端点使用"
+            },
+            {
+              "name": "results[].toptier_code",
+              "type": "string",
+              "desc": "CGAC/FREC 顶层机构代码(3-4 位数字)"
+            },
+            {
+              "name": "results[].agency_name",
+              "type": "string",
+              "desc": "机构全称"
+            },
+            {
+              "name": "results[].abbreviation",
+              "type": "string",
+              "desc": "机构缩写"
+            },
+            {
+              "name": "results[].active_fy",
+              "type": "string",
+              "desc": "该机构当前活跃财年"
+            },
+            {
+              "name": "results[].obligated_amount",
+              "type": "number",
+              "desc": "已义务金额"
+            },
+            {
+              "name": "results[].outlay_amount",
+              "type": "number",
+              "desc": "已支出金额"
+            },
+            {
+              "name": "results[].percentage_of_total_budget_authority",
+              "type": "number",
+              "desc": "占全政府预算授权比例(0-1)"
+            }
+          ],
+          "notes": "实测 results 数组长度 = 111(顶层机构数); 响应无 total 字段, 总量以数组长度计。官方合同另支持 sort=percentage_of_total_budget_authority / order=asc|desc(本次未实测, 未登记)"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "agency_awards",
+        "name": "机构财年交易汇总(交易数与义务额)",
+        "method": "GET",
+        "url_template": "https://api.usaspending.gov/api/v2/agency/{toptier_code}/awards/?fiscal_year={fiscal_year}",
+        "params": [
+          {
+            "name": "toptier_code",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "097",
+            "desc": "顶层机构代码(仅接受 3-4 位数字字符串, 097=国防部)"
+          },
+          {
+            "name": "fiscal_year",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 2024,
+            "example": 2024,
+            "desc": " appropriations 财年, 官方合同默认当前财年"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "total_field": "transaction_count",
+          "fields": [
+            {
+              "name": "fiscal_year",
+              "type": "int"
+            },
+            {
+              "name": "toptier_code",
+              "type": "string"
+            },
+            {
+              "name": "transaction_count",
+              "type": "int",
+              "desc": "该机构该财年交易笔数"
+            },
+            {
+              "name": "obligations",
+              "type": "number",
+              "desc": "义务总额(美元)"
+            },
+            {
+              "name": "latest_action_date",
+              "type": "string",
+              "desc": "该财年最后交易日"
+            },
+            {
+              "name": "messages",
+              "type": "array",
+              "desc": "告警/提示数组"
+            }
+          ],
+          "notes": "实测 097(国防部)FY2024: transaction_count=4448047, obligations=456651266112.86, latest_action_date=2024-09-30。响应是扁平对象, 无数据列表, 故不设 item_path; total_field=transaction_count 即该机构该财年交易总数"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 3000
+      },
+      {
+        "id": "sub_agency_count",
+        "name": "机构下属单位与办公室计数",
+        "method": "GET",
+        "url_template": "https://api.usaspending.gov/api/v2/agency/{toptier_code}/sub_agency/count/?fiscal_year={fiscal_year}",
+        "params": [
+          {
+            "name": "toptier_code",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "097",
+            "desc": "顶层机构代码(3-4 位数字)"
+          },
+          {
+            "name": "fiscal_year",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 2024,
+            "example": 2024,
+            "desc": "财年, 官方合同默认当前财年"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "total_field": "sub_agency_count",
+          "fields": [
+            {
+              "name": "toptier_code",
+              "type": "string"
+            },
+            {
+              "name": "fiscal_year",
+              "type": "int"
+            },
+            {
+              "name": "sub_agency_count",
+              "type": "int",
+              "desc": "唯一 sub-agency 数量"
+            },
+            {
+              "name": "office_count",
+              "type": "int",
+              "desc": "办公室数量"
+            },
+            {
+              "name": "messages",
+              "type": "array"
+            }
+          ],
+          "notes": "实测 097(国防部)FY2024: sub_agency_count=27, office_count=1223。官方合同另支持 agency_type=awarding|funding(默认 awarding), 本次未实测故未登记"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 12000
+      },
+      {
+        "id": "federal_account_count",
+        "name": "机构联邦账户/国库账户计数",
+        "method": "GET",
+        "url_template": "https://api.usaspending.gov/api/v2/agency/{toptier_code}/federal_account/count/?fiscal_year={fiscal_year}",
+        "params": [
+          {
+            "name": "toptier_code",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "097",
+            "desc": "顶层机构代码(3-4 位数字)"
+          },
+          {
+            "name": "fiscal_year",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 2024,
+            "example": 2024,
+            "desc": "财年, 官方合同默认当前财年"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "total_field": "federal_account_count",
+          "fields": [
+            {
+              "name": "toptier_code",
+              "type": "string"
+            },
+            {
+              "name": "fiscal_year",
+              "type": "int"
+            },
+            {
+              "name": "federal_account_count",
+              "type": "int",
+              "desc": "联邦拨款账户数"
+            },
+            {
+              "name": "treasury_account_count",
+              "type": "int",
+              "desc": "国库账户数"
+            },
+            {
+              "name": "messages",
+              "type": "array"
+            }
+          ],
+          "notes": "实测 097(国防部)FY2024: federal_account_count=143, treasury_account_count=1041"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 3000
+      },
+      {
+        "id": "submission_periods",
+        "name": "机构提交期次表(增量水位线来源)",
+        "method": "GET",
+        "url_template": "https://api.usaspending.gov/api/v2/references/submission_periods/",
+        "params": [],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "item_path": "available_periods",
+          "fields": [
+            {
+              "name": "available_periods",
+              "type": "array",
+              "desc": "DABS 提交期次数组"
+            },
+            {
+              "name": "available_periods[].period_start_date",
+              "type": "string",
+              "desc": "期次起始日"
+            },
+            {
+              "name": "available_periods[].period_end_date",
+              "type": "string",
+              "desc": "期次结束日"
+            },
+            {
+              "name": "available_periods[].submission_start_date",
+              "type": "string",
+              "desc": "提交窗口开启日"
+            },
+            {
+              "name": "available_periods[].submission_due_date",
+              "type": "string",
+              "desc": "提交截止日"
+            },
+            {
+              "name": "available_periods[].submission_reveal_date",
+              "type": "string",
+              "desc": "数据公开日(reveal_date 之后该期数据才对外可见)"
+            },
+            {
+              "name": "available_periods[].submission_fiscal_year",
+              "type": "int"
+            },
+            {
+              "name": "available_periods[].submission_fiscal_month",
+              "type": "int"
+            },
+            {
+              "name": "available_periods[].is_quarter",
+              "type": "bool",
+              "desc": "true=季度提交, false=月度提交"
+            }
+          ],
+          "notes": "实测 available_periods 长度 = 110, period_start_date 覆盖 2016-10-01 至 2026-08-01; 无 total 字段, 总量=数组长度。这是官方增量口径: 逐月(季度)按 submission_reveal_date 拉新披露期次"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 5000
+      },
+      {
+        "id": "last_updated",
+        "name": "全库最后更新时间",
+        "method": "GET",
+        "url_template": "https://api.usaspending.gov/api/v2/awards/last_updated/",
+        "params": [],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "last_updated",
+              "type": "string",
+              "desc": "全库最后刷新日期(M/D/YYYY)"
+            }
+          ],
+          "notes": "实测返回 {\"last_updated\":\"10/23/2026\"}; 扁平对象无列表, 不设 item_path / total_field; 用作全库增量水位线"
+        },
+        "cache_ttl_s": 300,
+        "budget_ms": 3000
+      }
+    ],
+    "Regulations.gov 规则制定与公众评论": [
+      {
+        "id": "documents",
+        "name": "规则制定文件检索(草案/终稿/通知/公众提交)",
+        "method": "GET",
+        "url_template": "https://api.regulations.gov/v4/documents?api_key={api_key}&page[size]={size}",
+        "page_size": 25,
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "DEMO_KEY",
+            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 25,
+            "example": 25,
+            "desc": "每页条数(page[size]);上游要求 >=5, 小于 5 返回 400"
+          }
+        ],
+        "response": {
+          "media_type": "application/vnd.api+json",
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "meta.totalElements",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array",
+              "desc": "文件数组(JSON:API 风格)"
+            },
+            {
+              "name": "data[].id",
+              "type": "string",
+              "desc": "文件 id, 如 FAA-2022-0674-0006"
+            },
+            {
+              "name": "data[].type",
+              "type": "string",
+              "desc": "恒为 documents"
+            },
+            {
+              "name": "data[].attributes",
+              "type": "object",
+              "desc": "属性对象;含 agencyId / objectId / frDocNum / documentType / subtype / title / docketId / postedDate / lastModifiedDate / commentStartDate / commentEndDate / openForComment / withinCommentPeriod / withdrawn"
+            },
+            {
+              "name": "meta.totalElements",
+              "type": "int",
+              "desc": "命中文件总数"
+            },
+            {
+              "name": "meta.pageNumber",
+              "type": "int",
+              "desc": "当前页码"
+            },
+            {
+              "name": "meta.pageSize",
+              "type": "int",
+              "desc": "上游实际采用的每页条数"
+            },
+            {
+              "name": "meta.numberOfElements",
+              "type": "int",
+              "desc": "本页返回条数"
+            },
+            {
+              "name": "meta.totalPages",
+              "type": "int",
+              "desc": "上游按 maxPageSize 封顶后的总页数(不是总数)"
+            },
+            {
+              "name": "meta.hasNextPage",
+              "type": "bool",
+              "desc": "是否还有下一页"
+            },
+            {
+              "name": "meta.aggregations",
+              "type": "object",
+              "desc": "按 subtype/documentType/agencyId/postedDate 等维度的聚合计数"
+            }
+          ],
+          "notes": "实测(无过滤条件) meta.totalElements=1995556, meta.pageSize=25, meta.numberOfElements=25, meta.totalPages=40, hasNextPage=true。上游忽略 per_page 参数(实测 per_page=1/2/500 均仍返回 pageSize=25); 真正生效的是 JSON:API 风格的 page[size](实测 page[size]=5 -> pageSize=5)。注意: meta 里没有 totalCount 字段, 总数字段名是 meta.totalElements"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 20000
+      },
+      {
+        "id": "comments",
+        "name": "公众评论检索",
+        "method": "GET",
+        "url_template": "https://api.regulations.gov/v4/comments?api_key={api_key}&page[size]={size}",
+        "page_size": 25,
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "DEMO_KEY",
+            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 25,
+            "example": 25,
+            "desc": "每页条数(page[size]);上游要求 >=5"
+          }
+        ],
+        "response": {
+          "media_type": "application/vnd.api+json",
+          "shape": "object",
+          "item_path": "data",
+          "total_field": "meta.totalElements",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array",
+              "desc": "评论数组"
+            },
+            {
+              "name": "data[].id",
+              "type": "string",
+              "desc": "评论 id, 如 OPM-2026-0100-6360"
+            },
+            {
+              "name": "data[].type",
+              "type": "string",
+              "desc": "恒为 comments"
+            },
+            {
+              "name": "data[].attributes",
+              "type": "object",
+              "desc": "属性对象;含 agencyId / objectId / documentType / title / postedDate / lastModifiedDate / withdrawn"
+            },
+            {
+              "name": "meta.totalElements",
+              "type": "int",
+              "desc": "命中评论总数"
+            },
+            {
+              "name": "meta.pageSize",
+              "type": "int"
+            },
+            {
+              "name": "meta.totalPages",
+              "type": "int"
+            },
+            {
+              "name": "meta.hasNextPage",
+              "type": "bool"
+            }
+          ],
+          "notes": "实测(无过滤条件) meta.totalElements=27117899 条公众评论, meta.pageSize=25, meta.totalPages=40。评论项 attributes 里 postedDate / lastModifiedDate 即增量字段"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 20000
+      },
+      {
+        "id": "agencies",
+        "name": "发布机构清单",
+        "method": "GET",
+        "url_template": "https://api.regulations.gov/v4/agencies?api_key={api_key}",
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "DEMO_KEY",
+            "desc": "API key;官方 DEMO_KEY 可直接用, 也可到 api.regulations.gov 免费注册"
+          }
+        ],
+        "response": {
+          "media_type": "application/vnd.api+json",
+          "shape": "object",
+          "item_path": "data",
+          "fields": [
+            {
+              "name": "data",
+              "type": "array",
+              "desc": "机构数组"
+            },
+            {
+              "name": "data[].id",
+              "type": "string",
+              "desc": "机构代码, 如 ABMC"
+            },
+            {
+              "name": "data[].type",
+              "type": "string",
+              "desc": "恒为 agencies"
+            },
+            {
+              "name": "data[].attributes",
+              "type": "object",
+              "desc": "属性对象;含 name / parent / agencyType / postingGuidelines / partner / participate"
+            },
+            {
+              "name": "data[].links",
+              "type": "object",
+              "desc": "该机构的关联链接"
+            }
+          ],
+          "notes": "实测 data 数组长度=332 个机构。该端点响应**没有 meta 段**(只有 data 与 links), 因此不存在 total 字段, 总量=数组长度(332)。分页/过滤参数未实测"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 20000
+      }
+    ],
+    "CFPB 消费者投诉数据库": [
+      {
+        "id": "complaints_search",
+        "name": "消费者投诉搜索(默认返回 15 个字段 + 分类聚合)",
+        "method": "GET",
+        "url_template": "https://www.consumerfinance.gov/data-research/consumer-complaints/search/api/v1/?size={size}&frm={frm}&sort={sort}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 1,
+            "example": 1,
+            "desc": "单次返回条数，上限 100(官方 OpenAPI: minimum 1 / maximum 100 / default 10)。单条投诉对象很大，建议 size=1"
+          },
+          {
+            "name": "frm",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "example": 0,
+            "desc": "偏移量(官方 OpenAPI 参数名为 frm，不是 from)，minimum 1 / maximum 100000 / default 0；深翻页需配合 search_after"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "type": "string",
+            "default": "created_date_desc",
+            "example": "created_date_desc",
+            "desc": "官方 OpenAPI 枚举: relevance_desc / relevance_asc / created_date_desc / created_date_asc"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "hits.hits",
+          "total_field": "hits.total.value",
+          "fields": [
+            {
+              "name": "hits.hits.0._index",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._id",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._score",
+              "type": "number"
+            },
+            {
+              "name": "hits.hits.0._source",
+              "type": "object"
+            },
+            {
+              "name": "hits.hits.0.sort",
+              "type": "array"
+            },
+            {
+              "name": "hits.hits.0._source.complaint_id",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.date_received",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.date_sent_to_company",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.product",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.sub_product",
+              "type": "string",
+              "desc": "子产品；并非所有 Product 都有 Sub-product，可能为 null"
+            },
+            {
+              "name": "hits.hits.0._source.issue",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.sub_issue",
+              "type": "string",
+              "desc": "子问题；并非所有 Issue 都有对应 Sub-issue，可能为 null"
+            },
+            {
+              "name": "hits.hits.0._source.company",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.company_response",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.company_public_response",
+              "type": "string",
+              "desc": "公司公开回应；仅当公司选择公开回应时才有值，实测样本中可为 null"
+            },
+            {
+              "name": "hits.hits.0._source.state",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.zip_code",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.submitted_via",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.timely",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.tags",
+              "type": "string",
+              "desc": "标签(Older American / Servicemember 等)，官方字段参考页列为正式字段；实测样本中该值为 null"
+            }
+          ],
+          "notes": "实测 hits.total.value=18590360，命中总数(计数口径=hits.total.value，非 hits.length)。实测 size=1 时响应体仍有 400449 字节、耗时 0.9~8.7s，务必 size=1 并给足预算。顶层另有 _meta(last_updated/last_indexed/total_record_count/break_points) 与 aggregations；no_aggs=true 可关闭 aggregations(实测生效)。官方 OpenAPI 未出现 amount 字段，实测 _source 也不含 amount。 字段名采用可解析点号路径 hits.hits.0._source.<field>，等价于 hits.hits[].<field> 的逐条取值（网关按点号路径解析）。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 20000,
+        "page_size": 25,
+        "notes": "单条投诉对象很大(size=25 约 400KB),网关默认响应体上限 1MB,故 page_size 固定 25"
+      },
+      {
+        "id": "complaints_filtered",
+        "name": "按产品/州/受理日期区间过滤(增量拉取用)",
+        "method": "GET",
+        "url_template": "https://www.consumerfinance.gov/data-research/consumer-complaints/search/api/v1/?size={size}&product={product}&state={state}&date_received_min={date_received_min}&date_received_max={date_received_max}&sort={sort}&no_aggs={no_aggs}",
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "default": 1,
+            "example": 1,
+            "desc": "返回条数，上限 100；单条投诉对象很大，建议 size=1"
+          },
+          {
+            "name": "product",
+            "in": "query",
+            "type": "string",
+            "example": "Debt collection",
+            "desc": "产品/子产品过滤，可重复；子产品用 '产品•子产品' 形式(官方 OpenAPI: product / subproduct separated by '•')",
+            "required": true
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "type": "string",
+            "example": "FL",
+            "desc": "州过滤，用两位缩写(CA/VA/FL…)，可重复",
+            "required": true
+          },
+          {
+            "name": "date_received_min",
+            "in": "query",
+            "type": "string",
+            "example": "2026-10-01",
+            "desc": "date >= date_received_min，格式 2017-03-04(官方 OpenAPI: 'Return results with date >= date_received_min')",
+            "required": true
+          },
+          {
+            "name": "date_received_max",
+            "in": "query",
+            "type": "string",
+            "example": "2026-10-23",
+            "desc": "date < date_received_max，格式 2017-03-04",
+            "required": true
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "type": "string",
+            "default": "created_date_desc",
+            "example": "created_date_desc",
+            "desc": "官方 OpenAPI 枚举: relevance_desc / relevance_asc / created_date_desc / created_date_asc"
+          },
+          {
+            "name": "no_aggs",
+            "in": "query",
+            "type": "bool",
+            "default": "true",
+            "example": "true",
+            "desc": "true 表示不返回 aggregations(实测生效，可显著减小响应体)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "hits.hits",
+          "total_field": "hits.total.value",
+          "fields": [
+            {
+              "name": "hits.hits.0._index",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._id",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._score",
+              "type": "number"
+            },
+            {
+              "name": "hits.hits.0._source",
+              "type": "object"
+            },
+            {
+              "name": "hits.hits.0.sort",
+              "type": "array"
+            },
+            {
+              "name": "hits.hits.0._source.complaint_id",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.date_received",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.date_sent_to_company",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.product",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.sub_product",
+              "type": "string",
+              "desc": "子产品；并非所有 Product 都有 Sub-product，可能为 null"
+            },
+            {
+              "name": "hits.hits.0._source.issue",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.sub_issue",
+              "type": "string",
+              "desc": "子问题；并非所有 Issue 都有对应 Sub-issue，可能为 null"
+            },
+            {
+              "name": "hits.hits.0._source.company",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.company_response",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.company_public_response",
+              "type": "string",
+              "desc": "公司公开回应；仅当公司选择公开回应时才有值，实测样本中可为 null"
+            },
+            {
+              "name": "hits.hits.0._source.state",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.zip_code",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.submitted_via",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.timely",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.tags",
+              "type": "string",
+              "desc": "标签(Older American / Servicemember 等)，官方字段参考页列为正式字段；实测样本中该值为 null"
+            }
+          ],
+          "notes": "增量口径实测: date_received_min=2026-10-01 命中 408251 条，命中集内最新一条 date_received=2026-10-22T03:59:23.000Z(与 _meta.last_updated 一致)。product=Debt collection 命中 1220161 条；state=FL 命中 2550512 条(均实测)。date_received_min/max、product、state、no_aggs、sort 均已实测；分页深翻页须用 frm + search_after(值取自 _meta.break_points)。 字段名采用可解析点号路径 hits.hits.0._source.<field>，等价于 hits.hits[].<field> 的逐条取值（网关按点号路径解析）。"
+        },
+        "cache_ttl_s": 3600,
+        "budget_ms": 20000,
+        "page_size": 25
+      },
+      {
+        "id": "complaint_by_id",
+        "name": "按投诉 ID 查询单条投诉",
+        "method": "GET",
+        "url_template": "https://www.consumerfinance.gov/data-research/consumer-complaints/search/api/v1/{complaint_id}",
+        "params": [
+          {
+            "name": "complaint_id",
+            "in": "path",
+            "required": true,
+            "type": "int",
+            "example": "9999997",
+            "desc": "投诉唯一编号(官方 OpenAPI: Find consumer complaint by ID)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "hits.hits",
+          "total_field": "hits.total.value",
+          "fields": [
+            {
+              "name": "hits.hits.0._index",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._id",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._score",
+              "type": "number"
+            },
+            {
+              "name": "hits.hits.0._source",
+              "type": "object"
+            },
+            {
+              "name": "hits.hits.0._source.complaint_id",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.date_received",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.date_sent_to_company",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.product",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.sub_product",
+              "type": "string",
+              "desc": "子产品；并非所有 Product 都有 Sub-product，可能为 null"
+            },
+            {
+              "name": "hits.hits.0._source.issue",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.sub_issue",
+              "type": "string",
+              "desc": "子问题；并非所有 Issue 都有对应 Sub-issue，可能为 null"
+            },
+            {
+              "name": "hits.hits.0._source.company",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.company_response",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.company_public_response",
+              "type": "string",
+              "desc": "公司公开回应；仅当公司选择公开回应时才有值，实测样本中可为 null"
+            },
+            {
+              "name": "hits.hits.0._source.state",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.zip_code",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.submitted_via",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.timely",
+              "type": "string"
+            },
+            {
+              "name": "hits.hits.0._source.tags",
+              "type": "string",
+              "desc": "标签(Older American / Servicemember 等)，官方字段参考页列为正式字段；实测样本中该值为 null"
+            },
+            {
+              "name": "hits.hits.0._source.date_indexed",
+              "type": "string"
+            }
+          ],
+          "notes": "实测 9999997 返回 200，hits.total.value=1，响应体 904 字节。该端点 _source 比搜索端点多一个 date_indexed 字段(实测)，其余 15 字段一致。 字段名采用可解析点号路径 hits.hits.0._source.<field>，等价于 hits.hits[].<field> 的逐条取值（网关按点号路径解析）。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 5000,
+        "notes": "按投诉 ID 取单条;单条对象约 15KB"
+      }
+    ],
+    "College Scorecard 院校数据": [
+      {
+        "id": "schools",
+        "name": "院校列表(默认全字段嵌套结构，可分页全量)",
+        "method": "GET",
+        "url_template": "https://api.data.gov/ed/collegescorecard/v1/schools?api_key={api_key}&page={page}&per_page={per_page}",
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "example": "DEMO_KEY",
+            "desc": "api.data.gov 平台 key。官方文档：注册 key 限额 1,000 次/小时；未注册可用官方 DEMO_KEY(限额更严：30 次/小时、50 次/天)",
+            "default": "DEMO_KEY"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "default": 0,
+            "example": 0,
+            "desc": "页码，从 0 开始(官方文档: Specify the page number (default is 0))"
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "type": "int",
+            "default": 20,
+            "example": 100,
+            "desc": "每页条数，官方文档上限 100(default is 20, maximum is 100)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "metadata.total",
+          "fields": [
+            {
+              "name": "results.0.id",
+              "type": "int"
+            },
+            {
+              "name": "results.0.ope6_id",
+              "type": "string"
+            },
+            {
+              "name": "results.0.ope8_id",
+              "type": "string"
+            },
+            {
+              "name": "results.0.fed_sch_cd",
+              "type": "string"
+            },
+            {
+              "name": "results.0.school.name",
+              "type": "string"
+            },
+            {
+              "name": "results.0.school.city",
+              "type": "string"
+            },
+            {
+              "name": "results.0.school.state",
+              "type": "string"
+            },
+            {
+              "name": "results.0.school.zip",
+              "type": "string"
+            },
+            {
+              "name": "results.0.school.ownership",
+              "type": "int"
+            },
+            {
+              "name": "results.0.school.accreditor",
+              "type": "string"
+            },
+            {
+              "name": "results.0.location.lat",
+              "type": "number"
+            },
+            {
+              "name": "results.0.location.lon",
+              "type": "number"
+            },
+            {
+              "name": "results.0.latest.school.peps_ownership",
+              "type": "string"
+            },
+            {
+              "name": "results.0.latest.student.size",
+              "type": "int"
+            },
+            {
+              "name": "results.0.latest.student.grad_students",
+              "type": "int"
+            },
+            {
+              "name": "results.0.latest.completion.completion_rate_4yr_100nt",
+              "type": "number"
+            },
+            {
+              "name": "results.0.latest.completion.consumer_rate",
+              "type": "number"
+            },
+            {
+              "name": "results.0.latest.cost.tuition.in_state",
+              "type": "int"
+            },
+            {
+              "name": "results.0.latest.aid.pell_grant_rate",
+              "type": "number"
+            },
+            {
+              "name": "results.0.latest.earnings.10_yrs_after_entry.median",
+              "type": "int"
+            },
+            {
+              "name": "results.0.latest.repayment.3_yr_default_rate",
+              "type": "number"
+            },
+            {
+              "name": "results.0.latest.admissions.admission_rate.overall",
+              "type": "number"
+            },
+            {
+              "name": "results.0.latest.programs.cip_4_digit",
+              "type": "array"
+            }
+          ],
+          "notes": "实测 metadata.total=6278(全部在册院校口径)，metadata.page=0，metadata.per_page=1。默认响应为嵌套结构：results[] 里同时有扁平根对象 school/location/id/ope6_id/ope8_id/fed_sch_cd，以及 latest.{school,student,cost,aid,earnings,completion,repayment,academics,admissions,programs}。实测 results[].latest.student.size=6124、latest.completion.completion_rate_4yr_100nt=0.1375、latest.completion.consumer_rate=0.3245、latest.cost.tuition.in_state=10558。注意：latest.student.graduation_rate 在本样本(Alabama A & M University)中不存在，毕业率字段实际落在 latest.completion.* 与 latest.repayment.*，字段清单以官方 Data Dictionary 为准。 字段名采用可解析点号路径 results.0.<path>，等价于 results[].<path> 的逐条取值（网关按点号路径解析）。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 15000,
+        "notes": "api_key 默认 DEMO_KEY(官方演示 key,额度很小:30 次/小时 + 50 次/天);正式使用需注册免费 key 并用 params 覆盖。DEMO_KEY 超额返回 429"
+      },
+      {
+        "id": "schools_fields",
+        "name": "按字段投影查询(默认返回扁平点号键)",
+        "method": "GET",
+        "url_template": "https://api.data.gov/ed/collegescorecard/v1/schools?api_key={api_key}&fields={fields}&per_page={per_page}",
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "example": "DEMO_KEY",
+            "desc": "api.data.gov 平台 key，DEMO_KEY 亦可用(限额更严)",
+            "default": "DEMO_KEY"
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "type": "string",
+            "example": "id,school.name,school.state,latest.student.size",
+            "desc": "逗号分隔的字段路径列表。官方文档：可用通配符(如 latest)；未加 keys_nested=true 时返回扁平点号键",
+            "required": true
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "type": "int",
+            "default": 20,
+            "example": 1,
+            "desc": "每页条数，上限 100"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "metadata.total",
+          "fields": [
+            {
+              "name": "id",
+              "type": "int"
+            },
+            {
+              "name": "school.name",
+              "type": "string"
+            },
+            {
+              "name": "school.state",
+              "type": "string"
+            },
+            {
+              "name": "latest.student.size",
+              "type": "int"
+            },
+            {
+              "name": "latest.completion.completion_rate_4yr_100nt",
+              "type": "number"
+            },
+            {
+              "name": "latest.completion.consumer_rate",
+              "type": "number"
+            }
+          ],
+          "notes": "实测 ?fields=id,school.name,school.state,latest.student.size,latest.completion.completion_rate_4yr_100nt,latest.completion.consumer_rate 返回 200 / 257 字节，键为扁平点号串：{\"latest.student.size\":6124,\"latest.completion.completion_rate_4yr_100nt\":0.1375,\"latest.completion.consumer_rate\":0.3245,\"school.name\":\"Alabama A & M University\",\"school.state\":\"AL\",\"id\":100654}。加 keys_nested=true 可得嵌套对象(实测 200 / 168 字节：{\"latest\":{\"student\":{\"size\":6124}},\"school\":{\"name\":\"Alabama A & M University\",\"state\":\"AL\"},\"id\":100654})。metadata.total 仍为 6278。本端点是本网关做字段级元数据抽取的首选。 注意：本端点指定 fields 时响应为扁平点号键，故 response.fields 直接登记字面键名（id / school.name / ...），而非 results.0.* 路径。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 15000
+      },
+      {
+        "id": "schools_filter",
+        "name": "按州/校名/城市过滤院校(字段投影形态)",
+        "method": "GET",
+        "url_template": "https://api.data.gov/ed/collegescorecard/v1/schools?api_key={api_key}&school.state={state}&fields={fields}&per_page={per_page}",
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "example": "DEMO_KEY",
+            "desc": "api.data.gov 平台 key。官方文档：注册 key 限额 1,000 次/小时；未注册可用官方 DEMO_KEY(限额更严：30 次/小时、50 次/天)",
+            "default": "DEMO_KEY"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "type": "string",
+            "example": "NY",
+            "desc": "州代码精确匹配；官方文档：多值用逗号分隔作 value list(如 school.degrees_awarded.predominant=2,3,4)，排除用 __not 后缀，数值区间用 __range(如 2013.student.size__range=100..500)。同类精确过滤参数还有 school.name / school.city(官方文档示例 school.name=Harvard University)",
+            "required": true
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "type": "string",
+            "example": "id,school.name,school.state",
+            "desc": "逗号分隔的字段路径列表。官方文档：可用通配符(如 latest)；未加 keys_nested=true 时返回扁平点号键",
+            "required": true
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "type": "int",
+            "default": 1,
+            "example": 1,
+            "desc": "每页条数，上限 100(官方文档 maximum is 100)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "item_path": "results",
+          "total_field": "metadata.total",
+          "fields": [
+            {
+              "name": "id",
+              "type": "int"
+            },
+            {
+              "name": "school.name",
+              "type": "string"
+            },
+            {
+              "name": "school.state",
+              "type": "string"
+            }
+          ],
+          "notes": "实测 ?school.state=NY&per_page=1&fields=id,school.name,school.state 返回 200 / 132 字节，metadata.total=418(即纽约州 418 所院校)，首条 {\"school.name\":\"Bais Binyomin Academy\",\"school.state\":\"NY\",\"id\":128586}。过滤后的 total 是子集规模，全库规模口径见端点 schools。本端点模板固定带 fields，故响应为扁平点号键，response.fields 登记字面键名(id / school.name / school.state)；若去掉 fields 参数则返回默认嵌套结构，届时路径为 results[].id / results[].school.name / results[].school.state。"
+        },
+        "cache_ttl_s": 86400,
+        "budget_ms": 15000
+      }
+    ],
+    "日本 EDINET 有価証券報告書": [
+      {
+        "id": "documents",
+        "name": "提交文件列表",
+        "method": "GET",
+        "url_template": "https://api.edinet-fsa.go.jp/api/v2/documents.json?date={date}&type={type}&Subscription-Key={subscription_key}",
+        "params": [
+          {
+            "name": "subscription_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_EDINET_SUBSCRIPTION_KEY",
+            "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖"
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "2026-10-22",
+            "desc": "提交日 YYYY-MM-DD"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 2,
+            "desc": "文档类型,2=有価証券報告書"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "notes": "成功响应结构未实测(需 Subscription-Key);本机实测错误响应为 {\"StatusCode\":401,\"message\":\"Access denied due to invalid subscription key...\"};官方 API v2 规格页在本机被 WAF 拦截,故未声明 item_path",
+          "fields": [
+            {
+              "name": "StatusCode",
+              "type": "int",
+              "desc": "错误响应状态码(实测 401)"
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "desc": "错误信息"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "document",
+        "name": "提交文件正文/XBRL 下载",
+        "method": "GET",
+        "url_template": "https://api.edinet-fsa.go.jp/api/v2/documents/{doc_id}?type={type}&Subscription-Key={subscription_key}",
+        "params": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "S100XXXX",
+            "desc": "docID(列表端点返回)"
+          },
+          {
+            "name": "subscription_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_EDINET_SUBSCRIPTION_KEY",
+            "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 2,
+            "desc": "文档类型,2=有価証券報告書"
+          }
+        ],
+        "response": {
+          "shape": "text",
+          "notes": "返回二进制文件(zip/xlsx),非 JSON;未实测(需 key),建议按官方文档直连上游"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "韩国 DART 电子披露": [
+      {
+        "id": "disclosure_list",
+        "name": "披露文件检索",
+        "method": "GET",
+        "url_template": "https://opendart.fss.or.kr/api/list.json?crtfc_key={crtfc_key}&bgn_de={bgn_de}&end_de={end_de}&page_count={page_count}",
+        "params": [
+          {
+            "name": "crtfc_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_DART_API_KEY",
+            "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖"
+          },
+          {
+            "name": "bgn_de",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "20260101",
+            "desc": "检索开始日 YYYYMMDD"
+          },
+          {
+            "name": "end_de",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "20260131",
+            "desc": "检索结束日 YYYYMMDD"
+          },
+          {
+            "name": "page_count",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 100,
+            "desc": "每页条数(最大 100)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "notes": "本机实测为错误响应 {\"status\":\"010\",\"message\":\"등록되지 않은 인증키입니다.\"};成功响应的 list 字段名来自官方开发指南(本机 JS 应用未渲染成功),未实测 ⇒ 未声明 item_path",
+          "fields": [
+            {
+              "name": "status",
+              "type": "string",
+              "desc": "响应状态码(实测 010=未注册认证키)"
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "desc": "响应说明"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "financial_statements",
+        "name": "单家公司财务报表明细",
+        "method": "GET",
+        "url_template": "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?crtfc_key={crtfc_key}&corp_code={corp_code}&bsns_year={bsns_year}&reprt_code={reprt_code}",
+        "params": [
+          {
+            "name": "crtfc_key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_DART_API_KEY",
+            "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖"
+          },
+          {
+            "name": "corp_code",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "00126380",
+            "desc": "企业高unique号(取自 corpCode.xml)"
+          },
+          {
+            "name": "bsns_year",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 2025,
+            "desc": "业务年度"
+          },
+          {
+            "name": "reprt_code",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 11011,
+            "desc": "报表类型(11011=年度,11012=半期)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "notes": "未实测(需 key);官方接口文档说明返回 list 数组"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "日本 e-Stat 政府统计": [
+      {
+        "id": "stats_list",
+        "name": "统计表目录检索",
+        "method": "GET",
+        "url_template": "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsList?appId={app_id}&statsCode={stats_code}&limit={limit}",
+        "params": [
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_E_STAT_APP_ID",
+            "desc": "e-Stat 官网免费申请的アプリケーションID(appId),调用时用 params 覆盖"
+          },
+          {
+            "name": "stats_code",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "example": "00200521",
+            "desc": "统计表代码(政府统计标准代码)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "type": "int",
+            "default": 10,
+            "desc": "返回条数上限"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "notes": "本机实测为认证失败响应 {\"GET_STATS_LIST\":{\"RESULT\":{\"STATUS\":100,\"ERROR_MSG\":\"認証に失敗しました。アプリケーションIDを確認してください。\",\"DATE\":\"2026-10-23T17:35:13.772+09:00\"},\"PARAMETER\":{...}}};成功响应的 VALUE 数组未实测 ⇒ 未声明 item_path",
+          "fields": [
+            {
+              "name": "GET_STATS_LIST.RESULT.STATUS",
+              "type": "int",
+              "desc": "业务状态码(实测 100=认证失败)"
+            },
+            {
+              "name": "GET_STATS_LIST.RESULT.ERROR_MSG",
+              "type": "string",
+              "desc": "错误信息(实测为日文认证失败提示)"
+            }
+          ]
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "stats_data",
+        "name": "统计表数据取得",
+        "method": "GET",
+        "url_template": "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData?appId={app_id}&statsCode={stats_code}&statsDataId={stats_data_id}",
+        "params": [
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_E_STAT_APP_ID",
+            "desc": "e-Stat 官网免费申请的アプリケーションID,调用时用 params 覆盖"
+          },
+          {
+            "name": "stats_code",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "00200521",
+            "desc": "统计表代码"
+          },
+          {
+            "name": "stats_data_id",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "0000000000",
+            "desc": "统计表数据 ID(由目录接口给出)"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "notes": "未实测(需 appId);成功响应结构依官方接口定义为 STATS_DATA 下的值"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "US Census Bureau API (ACS/人口普查)": [
+      {
+        "id": "acs5",
+        "name": "ACS 5年估计查询",
+        "method": "GET",
+        "url_template": "https://api.census.gov/data/{year}/acs/acs5?get={variables}&for=state:{state}&key={key}",
+        "params": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "YOUR_CENSUS_API_KEY",
+            "desc": "api.census.gov 免费申请的 API Key,调用时用 params 覆盖"
+          },
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "2023",
+            "desc": "数据年份"
+          },
+          {
+            "name": "variables",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "example": "NAME,B01003_001E",
+            "desc": "逗号分隔的变量名(见官方变量目录)"
+          },
+          {
+            "name": "state",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "06",
+            "desc": "州 FIPS 码(州级为两位,县级为三位)"
+          }
+        ],
+        "response": {
+          "shape": "array",
+          "notes": "ACS 查询返回二维数组(首行为表头),无对象字段 ⇒ 未声明 item_path;本机实测无 key 时返回 HTML「Missing Key」页,带 DEMO_KEY 返回「Invalid Key」"
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "acs5_groups",
+        "name": "ACS 数据组字典",
+        "method": "GET",
+        "url_template": "https://api.census.gov/data/{year}/acs/acs5/groups.json",
+        "params": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "example": "2023",
+            "desc": "数据年份"
+          }
+        ],
+        "response": {
+          "shape": "object",
+          "notes": "官方数据组字典(groups.json);未实测(需 key)"
+        },
+        "cache_ttl_s": 86400
+      }
+    ]
+  }
+}

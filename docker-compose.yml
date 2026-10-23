@@ -1,0 +1,95 @@
+# a-source-gateway —— 本机 / 单机部署
+#
+#   docker compose up -d --build        起服务
+#   docker compose logs -f gateway      看日志
+#   curl -s http://127.0.0.1:8848/livez | python3 -m json.tool
+#
+# 端口在宿主机侧用 PORT 覆盖:PORT=9000 docker compose up -d
+
+name: a-source-gateway
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: a-source-gateway:local
+    container_name: a-source-gateway
+    # Go 网关是主进程(PID 1),它会拉起 Python 解析 worker。
+    # init: true 让 docker 注入 init 负责回收僵尸进程。
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8848}:8848"
+    environment:
+      # ── 服务 ──
+      A_GATEWAY_HOST: "0.0.0.0"
+      A_GATEWAY_PORT: "8848"
+      # 事实源目录:这是容器内路径。wheel 里已经带了一份,
+      # 这里再指一份是双保险。改成宿主机路径会失效 —— 容器里没有那个路径。
+      A_GATEWAY_DATA_DIR: "/app/data"
+      # ── 身份:强烈建议设成真实邮箱 ──
+      # 写进 User-Agent。SEC、OpenAlex 等上游据此识别调用方,
+      # 不带邮箱 SEC 会直接 403。这是联系邮箱,不是密钥。
+      A_GATEWAY_CONTACT: "${A_GATEWAY_CONTACT:-}"
+      # ── 预算 ──
+      A_GATEWAY_BUDGET_MS: "${A_GATEWAY_BUDGET_MS:-500}"
+      A_GATEWAY_UPSTREAM_BUDGET_MS: "${A_GATEWAY_UPSTREAM_BUDGET_MS:-400}"
+      A_GATEWAY_RESERVE_MS: "${A_GATEWAY_RESERVE_MS:-100}"
+      # ── 缓存 ──
+      A_GATEWAY_CACHE_ENTRIES: "${A_GATEWAY_CACHE_ENTRIES:-512}"
+      A_GATEWAY_CACHE_BYTES: "${A_GATEWAY_CACHE_BYTES:-33554432}"
+      A_GATEWAY_CACHE_TTL_S: "${A_GATEWAY_CACHE_TTL_S:-900}"
+      A_GATEWAY_PREWARM: "${A_GATEWAY_PREWARM:-1}"
+      # ── 行为 ──
+      # auto = 有 Python 就用 Python 解析面,否则回落 Go 解析器
+      # go   = 纯 Go,不拉起 Python worker
+      A_GATEWAY_PARSER: "${A_GATEWAY_PARSER:-auto}"
+      A_GATEWAY_OFFLINE: "${A_GATEWAY_OFFLINE:-0}"
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/bin/healthcheck.py"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    # 日志轮转:json-file 驱动,单文件 10MB、最多 3 个 = 最多占 30MB。
+    # 不配的话长跑的容器能把磁盘写满。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # ── 关于缓存 ──────────────────────────────────────────────────────
+    # 缓存在网关进程内存里(in-process),不落盘、不共享。
+    # 所以这里没有任何 volume —— 挂了 volume 也不会持久化缓存,
+    # 重启就是冷缓存。想要持久化只能改网关实现,不是加个卷的事。
+    #
+    # 事实源(data/)已经打进镜像;改了仓库里的 data/ 需要重新 build:
+    #   docker compose up -d --build
+    # 只重启不改镜像的话,注册表还是旧的。
+
+  # ── 一次性 CLI(默认不启动)──────────────────────────────────────────
+  # 用法:
+  #   docker compose --profile tools run --rm tools list
+  #   docker compose --profile tools run --rm tools show crossref
+  #   docker compose --profile tools run --rm tools validate
+  #
+  # 走的是镜像里的 Python CLI(a-source-gateway-cli = python -m a_source_gateway.cli)。
+  # 说明:Python 包原本也装出一个叫 a-source-gateway 的命令,
+  # 会和 Go 网关二进制撞名,所以镜像里改成了 a-source-gateway-cli。
+  #
+  # tools:
+  #   profiles: ["tools"]
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: a-source-gateway:local
+  #   init: true
+  #   depends_on:
+  #     gateway:
+  #       condition: service_healthy
+  #   environment:
+  #     A_GATEWAY_DATA_DIR: "/app/data"
+  #     A_GATEWAY_CONTACT: "${A_GATEWAY_CONTACT:-}"
+  #   entrypoint: ["a-source-gateway-cli"]
+  #   command: ["list"]

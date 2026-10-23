@@ -1,0 +1,64 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── 运行时产物 ────────────────────────────────────────────────────────
+registry.json          # 生成物: a-source-gateway build-registry 产出
+.a_cache/
+.a_state.json
+*.log
+
+# ── 凭据(严禁入库)────────────────────────────────────────────────────
+# API key / token / 密码一律走环境变量, 任何形态的文件都不入库
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+secrets.json
+*_credentials.json
+worker-credentials.json
+
+# ── 本地数据与缓存 ────────────────────────────────────────────────────
+.cache/
+data/*.local.csv
+*.parquet
+*.duckdb
+
+# ── 编辑器 / 系统 ────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# ── 基准与报告产物 ───────────────────────────────────────────────────
+bench-report.json
+*.bench.json
+
+# 构建期从仓库根 data/ 同步生成, 不入库
+python/src/a_source_gateway/data/
+
+# ── 工具链与校验的临时产物 ───────────────────────────────────────────
+# scaffold_source.py --out-dir 的默认落点
+draft/
+# make parity 的注册表对比产物
+.parity/
+# GitHub API 探测临时文件
+gh*.json
+# build-registry / registry-dump 的导出物
+registry*.json
+

@@ -1,0 +1,105 @@
+# 网关本体:2 副本,滚动更新。
+#
+# 滚动策略 maxUnavailable:0 —— 更新期间永远至少留一个可用副本,
+# 上游官方 API 抖动时也不会把服务打空。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: a-source-gateway
+  labels:
+    app.kubernetes.io/name: a-source-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: a-source-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: a-source-gateway
+        app.kubernetes.io/component: gateway
+    spec:
+      # 给 preStop 留出排空时间:Pod 收到 SIGTERM 前先从 Endpoints 里摘掉
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: ghcr.io/hamr-hub/a-source-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8848
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: a-source-gateway-config
+            # ── 凭据:取消下面这行的注释才会注入 ──────────────────────
+            # 没有上游 API key 时不需要开;Secret 用外部工具创建,不要提交到仓库:
+            #   kubectl -n a-source-gateway create secret generic a-source-gateway-secrets \
+            #     --from-literal=A_GATEWAY_<某源>_KEY=<value>
+            # - secretRef:
+            #     name: a-source-gateway-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # 存活:进程还在吗?不查上游,所以上游抖动不会误杀 Pod。
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # 就绪:能接流量吗?与存活分开,避免启动期被反复重启。
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # 启动探针:预热可能耗时,给足 60s 再让 liveness 接管。
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          lifecycle:
+            preStop:
+              # 排空钩子:先睡 5s,让 kube-proxy / Ingress 把这个 Pod
+              # 从 Endpoints 摘掉(SIGTERM 是在 preStop 之后才发的),
+              # 这 5s 内的在途请求不会被打断。
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,116 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "a-source-gateway"
+version = "1.0.0"
+description = "海外 A 类(法规强制公开)数据源的通用网关: 不存业务数据, 元数据索引 + ≤500ms 的实时查询代理, 同时提供 HTTP API 与 MCP server"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["open-data", "mcp", "gateway", "sec-edgar", "gleif", "ofac", "openalex", "crossref"]
+authors = [{ name = "a-source-gateway contributors" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "pydantic>=2.6",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "mcp>=1.0",
+    "build>=1.2",
+]
+
+[project.scripts]
+a-source-gateway = "a_source_gateway.cli:main"
+a-source-gateway-mcp = "a_source_gateway.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/hamr-hub/a-source-gateway"
+Documentation = "https://github.com/hamr-hub/a-source-gateway/tree/main/docs"
+Issues = "https://github.com/hamr-hub/a-source-gateway/issues"
+Changelog = "https://github.com/hamr-hub/a-source-gateway/blob/main/CHANGELOG.md"
+
+# ── 单体仓库布局 ────────────────────────────────────────────────────────
+#   <root>/data            两份事实源(源清单 / 端点定义 / 别名),Go 与 Python 共享
+#   <root>/python/src/...  Python 解析面(包名 a_source_gateway)
+#   <root>/gateway/        Go 网关(独立 go.mod,只用标准库)
+#
+# data/ 直接 force-include 进 wheel —— 不做"复制一份进包"的同步步骤,
+# 避免出现"仓库里的 data 和 wheel 里的 data 不一致"这种漂移。
+[tool.hatch.build.targets.wheel]
+packages = ["python/src/a_source_gateway"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data/source_inventory.csv" = "a_source_gateway/data/source_inventory.csv"
+"data/source_inventory_cn.csv" = "a_source_gateway/data/source_inventory_cn.csv"
+"data/endpoints.json" = "a_source_gateway/data/endpoints.json"
+"data/aliases.json" = "a_source_gateway/data/aliases.json"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/python/src",
+    "/python/tests",
+    "/data",
+    "/docs",
+    "/scripts",
+    "/gateway",
+    "/README.md",
+    "/AGENTS.md",
+    "/CLAUDE.md",
+    "/GOVERNANCE.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/NOTICE",
+    "/CHANGELOG.md",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["python/src", "python/tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"python/tests/*" = ["S101"]
+"scripts/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+no_implicit_optional = true
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers -m 'not network'"
+markers = [
+    "network: 需要访问真实上游的用例(默认跳过, 用 -m network 开启)",
+]

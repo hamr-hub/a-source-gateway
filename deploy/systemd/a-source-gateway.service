@@ -1,0 +1,56 @@
+[Unit]
+Description=a-source-gateway 元数据网关(Go 网关 + Python 解析 worker)
+Documentation=https://github.com/hamr-hub/a-source-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=a-source-gateway
+Group=a-source-gateway
+
+# Go 网关是主进程;它会拉起并监管 Python 解析 worker
+# (python3 -m a_source_gateway.parser_worker)。
+ExecStart=/usr/local/bin/a-source-gateway
+
+# 工作目录:事实源(data/)放在这里。
+# Go 网关会从工作目录和可执行文件所在目录逐级向上找 data/,
+# 没有工作目录的话它找不到事实源,启动就会报"找不到数据文件"。
+WorkingDirectory=/var/lib/a-source-gateway
+
+# 运行参数放在 /etc/a-source-gateway/env(权限 0640,属主 root:a-source-gateway)。
+# 前面的 "-" 表示文件不存在时不报错 —— 没配也能起(全部走默认值)。
+EnvironmentFile=-/etc/a-source-gateway/env
+
+Restart=on-failure
+RestartSec=5
+# 给 SIGTERM 留出排空时间:Go 网关收到 SIGTERM 后停止接收新连接,
+# 等在途请求跑完再退出。
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# ── 加固 ──────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# ProtectSystem=strict 会把整个文件系统挂成只读,
+# 只放开这一个状态目录(如果将来网关要落盘运行时状态)。
+ReadWritePaths=/var/lib/a-source-gateway
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=a-source-gateway
+
+[Install]
+WantedBy=multi-user.target

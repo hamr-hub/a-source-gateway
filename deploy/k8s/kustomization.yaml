@@ -1,0 +1,17 @@
+# 用法:
+#   kubectl apply -k deploy/k8s/
+#
+# apply 顺序由 kustomization 的 resources 列表决定:
+#   ConfigMap → Deployment → Service
+# (Service 放最后,是为了避免在 Deployment 还没起来时就把流量导过来。)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: a-source-gateway
+
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  # secret.example.yaml 整份是注释,没有实际对象,故意不列进来。
+  # 需要凭据时用 kubectl create secret 或外部密钥管理创建同名 Secret。
