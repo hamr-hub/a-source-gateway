@@ -63,6 +63,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /v1/schema", s.handleSchema)
+	// FastAPI(Python 参照实现)自带 /openapi.json;Go 网关从同一张路由表
+	// 生成同一份文档,挂在相同路径上,两边保持一致。
+	s.mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
 	s.mux.HandleFunc("GET /v1/stats", s.handleStats)
 	s.mux.HandleFunc("GET /v1/sources", s.handleListSources)
 	s.mux.HandleFunc("GET /v1/sources/{source_id}", s.handleGetSource)
@@ -161,6 +164,16 @@ func (s *Server) handleSchema(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(schemaDoc))
+}
+
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	body, err := parser.Marshal(OpenAPIDocument())
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(body)
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {

@@ -199,6 +199,7 @@ print(env.meta.total, env.meta.latency_ms, env.meta.cached)
 ```
 
 完整字段定义见 [`docs/meta-schema.md`](docs/meta-schema.md),或运行时 `GET /v1/schema`。
+机器可读的 API 描述见 `GET /openapi.json`(OpenAPI 3.1,Go/Python 两平面同一路径,文档从路由表生成,不会漂移)。
 
 ---
 
@@ -222,19 +223,22 @@ print(env.meta.total, env.meta.latency_ms, env.meta.cached)
 3. **上游页大小归一化**:网关统一按固定页大小取,`limit` 在网关侧切 —— 缓存命中率大幅提升。
 4. **后台补数**:用户请求超时后,后台用 15s 预算补一次数并入缓存,下次请求秒回。
 
-实测(`a-source-gateway bench`,见 [`docs/performance.md`](docs/performance.md)):
+实测(`make bench-gateway`,**对 Go 网关(主运行时)**跑,见 [`docs/performance.md`](docs/performance.md)):
 
 | 指标 | 实测 |
 |---|---|
-| 元数据 p95 | 4.7ms |
-| 热路径中位 | 1.6ms |
-| 冷路径(24 次强制 cache miss)最差 | 421.7ms |
+| 元数据 p95 最差 | 3.0ms |
+| 热路径 query p95 最差 | 2.4ms(中位 1.1ms) |
+| 冷路径(每源首调)最差 | 410.2ms |
 | 超预算用例 | **0** |
-| 热路径有数据用例 | 10–12 / 12 |
+| 热路径有数据用例 | 8 / 10 |
 
-> SEC 系源在**本机连续高频访问**下会被上游限流, 表现为该用例取不到数据;
-> 隔离复测(单源、间隔访问)完全正常。这属于上游策略, 不是网关缺陷 ——
-> 详见 [`docs/performance.md`](docs/performance.md) §3.1。
+热路径的 p95 在**毫秒级**,因为命中缓存后完全不碰网络;冷路径受上游真实延迟约束 ——
+上游超过 400ms 预算时网关**降级并给出直连兜底**,而不是让调用方干等(这正是 500ms 契约的意义)。
+
+> 基准机在中国,到欧美上游的实测往返是 0.4–7.5s,因此冷路径里 18/20 个用例是
+> **降级态**(调用方拿到 `meta.degraded=true` + 直连 URL),不是网关故障。
+> 隔离复测(单源、间隔访问)完全正常。详见 [`docs/performance.md`](docs/performance.md) §3.1。
 
 ---
 

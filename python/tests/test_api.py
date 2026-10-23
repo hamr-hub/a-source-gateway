@@ -37,6 +37,19 @@ def test_schema_endpoint_documents_the_meta_format(client):
         assert k in env, f"schema 缺字段 {k}"
 
 
+def test_openapi_document_exposes_the_same_paths_as_the_go_gateway(client):
+    """FastAPI 自带 /openapi.json;Go 网关也挂在同一路径(从路由表生成)。
+    两边列出的业务路径必须一致, 文档不能只更新一侧。"""
+    r = client.get("/openapi.json")
+    assert r.status_code == 200
+    doc = r.json()
+    assert doc["openapi"].startswith("3.")
+    paths = doc["paths"]
+    for want in ("/v1/sources", "/v1/sources/{source_id}",
+                 "/v1/sources/{source_id}/endpoints/{endpoint_id}", "/v1/query"):
+        assert want in paths, f"OpenAPI 文档缺路径 {want}"
+
+
 def test_list_sources(client):
     d = client.get("/v1/sources?limit=5").json()
     assert d["meta"]["count"] >= 90

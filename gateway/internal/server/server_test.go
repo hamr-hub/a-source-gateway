@@ -72,7 +72,7 @@ func TestRoutesMetadata(t *testing.T) {
 		t.Errorf("sources = %v, want %v", root["sources"], want)
 	}
 
-	for _, path := range []string{"/healthz", "/livez", "/readyz", "/metrics", "/v1/schema", "/v1/stats"} {
+	for _, path := range []string{"/healthz", "/livez", "/readyz", "/metrics", "/v1/schema", "/v1/stats", "/openapi.json"} {
 		rec, _ := do(t, s, "GET", path, "")
 		if rec.Code != 200 {
 			t.Errorf("GET %s = %d", path, rec.Code)
@@ -245,6 +245,30 @@ func TestSchemaDocumentMatchesTheReference(t *testing.T) {
 	}
 	if doc["schema_version"] != "1.0" {
 		t.Errorf("schema_version = %v", doc["schema_version"])
+	}
+}
+
+func TestOpenAPIDocumentServedOverHTTP(t *testing.T) {
+	s := realServer(t)
+	rec, body := do(t, s, "GET", "/openapi.json", "")
+	if rec.Code != 200 {
+		t.Fatalf("GET /openapi.json = %d", rec.Code)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if doc["openapi"] != "3.1.0" {
+		t.Errorf("openapi 版本 = %v, want 3.1.0", doc["openapi"])
+	}
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok {
+		t.Fatal("文档缺 paths 对象")
+	}
+	for _, want := range []string{"/v1/sources", "/v1/sources/{source_id}", "/v1/query"} {
+		if _, ok := paths[want]; !ok {
+			t.Errorf("paths 里缺 %q", want)
+		}
 	}
 }
 

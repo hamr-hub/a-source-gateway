@@ -39,9 +39,40 @@
 - `A_GATEWAY_PARSER`(`auto`/`python`/`go`)、`A_GATEWAY_PARSER_PYTHON`、
   `A_GATEWAY_URL`、`A_GATEWAY_TIMEOUT_S`。
 
+### 评审修复(独立 code review 后修的)
+
+- **B1 · 500ms 契约在 Go 网关上不成立(阻塞级)**:
+  解析阶段原本新起一个完整 500ms 预算(而不是用**剩余**预算),且 Python 解析 worker 的
+  互斥锁不是 context-aware —— 等锁的请求会把上一个请求的解析时长整个加在自己身上。
+  实测单次 579ms、并发 701ms。现在解析阶段跑在 `deadline − ReserveMS` 之下,
+  worker 槽位改成可被 deadline 取消的信号量并按请求 id 解复用;修后 419ms / 400ms,
+  **0 超预算**。新增 `budget_test.go` 回归(跑真实 Python 解析面)。
+- **`{url}` 占位符不再原样注入**:此前 `{url}` 会被原样替换, 调用方可借此追加
+  查询参数(`&admin=true`)或用 `#` 截断。现在所有占位符一律百分号编码(路径参数保留 `/`),
+  Python / Go / 镜像实现三处同步。
+- **裸查询参数不再让 Python 侧崩溃**:模板里出现没有 `=` 的键时, Python 渲染抛
+  `IndexError`(Go 侧正常)—— 同一份数据文件在 Go 网关上能用、在 MCP 回落路径上会炸。
+- **NDJSON 协议补上端到端测试**:此前两套实现的协议零自动化覆盖。新增
+  `test_parser_worker_e2e.py`(真子进程 + 真管道, 覆盖"每请求一行""未知 op 不死"
+  "不失步""stdout 只走协议")与 `test_mirror_parity.py`(镜像实现与 resolver 逐例对齐)。
+- **Python 3.10 上超时类型不对(预存缺陷)**:3.10 的 `asyncio.TimeoutError` 与内建
+  `TimeoutError` 是两个类, 兼容层抛错了类, 导致信封里的 `errors[].type` 变成
+  `"TimeoutError"` 而不是 `"timeout"`。3.10 在 CI 矩阵里, 必须修。
+- **上游跳转限制为同主机**:此前跟随最多 10 跳, 一个 302 到内网的官方站会被跟进。
+  同时把 OFAC / HMLR 三个端点模板钉到跳转后的最终主机, 从源头免掉跳转。
+- **`GET /v1/query?params=[1,2]`** 在两个平面上状态码不一致, 统一为 400。
+- `.gitignore` 的行尾注释导致 5 条忽略规则全部失效(只有行首的 `#` 才是注释),
+  陈旧的 `registry.json`(97 源快照)会被误提交。
+- 新增 `.gitattributes`:把 `data/*.csv` 标成 `-text`, 保证 CRLF 逐字节入库
+  (否则 `scaffold_source.py --apply` 的"老行一个字节没动"承诺在克隆后不成立)。
+- 文档与实现漂移更正:正文上限 1MB(文档写 2MB)、后台补数预算 30s(文档写 15s)。
+
 ### 修复
 - 包安装路径错误:`packages = ["src/a_source_gateway"]` 指向不存在的目录,
   `pip install -e .` 装不出可导入的 `a_source_gateway`。
+- 别名键 `HM Land Registry Price Paid` 与清单里的 `HMLR Price Paid Data` 对不上,
+  导致 `hmlr` / `landregistry` / `ppd` 别名从未生效。
+- 端点参数类型 `boolean` 不在 schema 契约内(应为 `bool`)。
 
 ---
 
