@@ -221,6 +221,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: 判断是否推送与 tag
         id: meta
@@ -253,6 +254,8 @@ jobs:
           push: ${{ steps.meta.outputs.push == 'true' }}
           # PR 上只构建不打 tag(GITHUB_REF_NAME 形如 "2/merge",不是合法镜像 tag)
           tags: ${{ steps.meta.outputs.tags }}
+          # 与发布的 Go 二进制平台对齐: 云主机 amd64 + Apple Silicon/树莓派 arm64
+          platforms: linux/amd64,linux/arm64
           labels: |
             org.opencontainers.image.title=a-source-gateway
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
