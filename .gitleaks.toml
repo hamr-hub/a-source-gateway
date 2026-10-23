@@ -1,0 +1,31 @@
+# gitleaks 配置 —— 凭据扫描规则
+#
+# 项目立场:任何真实凭据都不得入库(见 .gitignore 与 SECURITY.md)。
+# 本文件只关掉两类**必然误报**的路径:虚拟环境 / 构建缓存,以及文档里的
+# 说明性示例。默认规则集(gitleaks 内置)保持开启。
+
+title = "a-source-gateway gitleaks config"
+
+[extend]
+# 使用 gitleaks 内置默认规则集,再叠加下面的全局白名单。
+useDefault = true
+
+[allowlist]
+description = "全局白名单:依赖/缓存目录与文档占位符"
+paths = [
+  '''(?:^|/)\.venv/''',
+  '''(?:^|/)\.mypy_cache/''',
+  '''(?:^|/)\.ruff_cache/''',
+  '''(?:^|/)\.pytest_cache/''',
+  '''(?:^|/)__pycache__/''',
+  '''(?:^|/)dist/''',
+  '''(?:^|/)build/''',
+  '''(?:^|/)bin/''',
+  '''(?:^|/)\.parity/''',
+]
+regexes = [
+  # 文档/示例中的占位符不是凭据
+  '''ghp_xxxxx''',
+  '''your[_-]?(?:key|token)''',
+  '''example[_-]?(?:key|token)''',
+]

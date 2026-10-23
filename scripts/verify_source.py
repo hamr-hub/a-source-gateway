@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 import urllib.error
@@ -222,14 +223,82 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
     return params, missing
 
 
+def run_all(args: argparse.Namespace) -> int:
+    """复验注册表里的所有源(逐源子进程, 单源失败不拖垮整批)。
+
+    输出一份汇总 JSON(mode="all");退出码等于未通过源数,上限 100,
+    unreachable 不计入失败(那是环境问题,不是源的问题,由报告里的状态体现)。
+    """
+    try:
+        runtime = _bs.GatewayRuntime(backend=args.resolver_backend,
+                                     data_dir=args.data_dir or None)
+    except Exception as exc:  # noqa: BLE001
+        json.dump({"mode": "all", "error": f"载入注册表失败: {exc}", "results": []},
+                  sys.stdout, ensure_ascii=False, indent=2)
+        return 2
+    ids = sorted(runtime.sources_by_id())
+
+    results: list[dict[str, Any]] = []
+    unreachable = 0
+    failures = 0
+    cmd_base = [sys.executable, str(Path(__file__).resolve()), "--json",
+                "--limit", str(args.limit), "--timeout", str(args.timeout),
+                "--resolver-backend", args.resolver_backend]
+    if args.data_dir:
+        cmd_base += ["--data-dir", args.data_dir]
+    if args.contact:
+        cmd_base += ["--contact", args.contact]
+    if args.no_raw_refetch:
+        cmd_base += ["--no-raw-refetch"]
+    if args.direct_only:
+        cmd_base += ["--direct-only"]
+
+    for i, sid in enumerate(ids, 1):
+        try:
+            proc = subprocess.run(cmd_base + [sid], capture_output=True, text=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            results.append({"source": sid, "status": "unreachable",
+                            "errors": ["单源复验超过 90s, 按不可达计"]})
+            unreachable += 1
+            print(f"[{i}/{len(ids)}] {sid}: unreachable (timeout)", file=sys.stderr)
+            continue
+        try:
+            row = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            row = {"source": sid, "status": "failed",
+                   "errors": [f"子进程输出无法解析 (rc={proc.returncode}): {proc.stderr[-300:]}"]}
+        results.append(row)
+        status = row.get("status", "failed")
+        if status == "unreachable":
+            unreachable += 1
+        elif status != "verified":
+            failures += 1
+        print(f"[{i}/{len(ids)}] {sid}: {status}", file=sys.stderr)
+
+    summary = {
+        "mode": "all",
+        "checked_at": now_iso(),
+        "total": len(results),
+        "verified": sum(1 for r in results if r.get("status") == "verified"),
+        "failed": failures,
+        "unreachable": unreachable,
+        "results": results,
+    }
+    json.dump(summary, sys.stdout, ensure_ascii=False, indent=2)
+    return min(failures, 100)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="verify_source.py",
         description="证据闸门: 真查一次上游, 断言登记的 item_path/total_field/fields 是真的。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="退出码: 0=已用真实数据验证通过 / 1=断言失败或降级 / 2=上游不可达")
-    ap.add_argument("source", help="数据源 id / 名称 / 别名")
+    ap.add_argument("source", nargs="?", default="",
+                    help="数据源 id / 名称 / 别名(--all 时省略)")
     ap.add_argument("--endpoint", default="", help="端点 id(默认取第一个非 entry 端点)")
+    ap.add_argument("--all", action="store_true",
+                    help="复验注册表里所有源;输出汇总 JSON, 退出码=未通过源数(上限 100)")
     ap.add_argument("--json", action="store_true", help="输出机器可读的验证报告")
     ap.add_argument("--data-dir", default="", help="数据文件目录(默认 <repo>/data)")
     ap.add_argument("--gateway-url", default="", help=f"网关地址(默认 {DEFAULT_GATEWAY_URL})")
@@ -244,6 +313,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--direct-only", action="store_true",
                     help="不查网关, 直接打上游(只验源本身的元数据, 不验网关链路)")
     args = ap.parse_args(argv)
+
+    if args.all:
+        if args.source:
+            ap.error("--all 与具体源不能同时给")
+        if not args.json:
+            print("✗ --all 只支持 --json 输出", file=sys.stderr)
+            return 2
+        return run_all(args)
+    if not args.source:
+        ap.error("缺少数据源 id/名称/别名(或用 --all 复验全部)")
 
     override: dict[str, Any] = {}
     if args.params:
