@@ -89,7 +89,7 @@ jobs:
         working-directory: gateway
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22'
           # gateway/ 只用标准库,没有 go.sum,setup-go 的依赖缓存用不上,
@@ -121,7 +121,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22'
           cache: false
