@@ -67,7 +67,7 @@ jobs:
 
       - name: 失败时开/更新 issue
         if: steps.verify.outputs.failed == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
