@@ -77,12 +77,15 @@
 | 清单文件 | 装什么 | 列 | 网关运行时是否加载 |
 |---|---|---|---|
 | `data/source_inventory.csv` | **海外**源(`国别` = 美国/欧盟/英国/全球/多国/…) | 17 列 | ✅ 全量加载 |
-| `data/source_inventory_cn.csv` | **国内**源(`国别` = 中国) | 18 列 | ⚠️ 只加载"已接入"的行 |
+| `data/source_inventory_cn.csv` | **国内**源(`国别` ∈ {中国, 中国大陆, 中华人民共和国}) | 18 列 | ⚠️ 只加载"已接入"的行 |
 
 **判定方法:只看 `国别` 列。**
 
-- `国别` 写 `中国` → 落 `data/source_inventory_cn.csv`
-- 其余一律(全球/多国/欧盟/美国…) → 落 `data/source_inventory.csv`
+- `国别` ∈ {`中国`, `中国大陆`, `中华人民共和国`} → 落 `data/source_inventory_cn.csv`
+- 其余一律(全球/多国/欧盟/美国/**中国香港**…) → 落 `data/source_inventory.csv`
+
+判定用的是 `a_source_gateway.registry.CN_COUNTRIES` / `is_cn_country()` —— 脚本与校验器
+都从这一处取,不在别处另抄一份。「中国香港」是单独法域,留在海外清单,所以这里是白名单而不是前缀匹配。
 
 不要靠源名、域名或"这是个新源"来猜归属;也不要因为国内清单还没进运行时,就把国内行
 顺手抄进海外清单。

@@ -38,8 +38,8 @@ func metaOf(t *testing.T, env map[string]any) map[string]any {
 func TestParserIsAlwaysReported(t *testing.T) {
 	s := realServer(t)
 	targets := []string{
-		"/v1/query?source=crossref&endpoint=not-an-endpoint",    // unknown endpoint
-		"/v1/query?source=crossref&endpoint=works&params=%7B%7D", // missing required param
+		"/v1/query?source=crossref&endpoint=not-an-endpoint",      // unknown endpoint
+		"/v1/query?source=crossref&endpoint=works&params=%7B%7D",  // missing required param
 		"/v1/query?source=sec_edgar&endpoint=works&params=%7B%7D", // contact required
 	}
 	for _, target := range targets {

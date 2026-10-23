@@ -280,6 +280,10 @@ async def query_get(source: str = Query(...), endpoint: str = Query(...),
         p = json.loads(params) if params else {}
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="params 必须是合法 JSON") from exc
+    # params 必须是对象。数组/标量在 Go 网关侧返回 400, 这里保持一致 ——
+    # 否则同一个请求在两个平面上给出不同的状态码。
+    if not isinstance(p, dict):
+        raise HTTPException(status_code=400, detail="params 必须是 JSON 对象")
     if r.resolve_source(source) is None:
         raise HTTPException(status_code=404, detail=f"未知数据源 {source}")
     req = QueryRequest(source=source, endpoint=endpoint, params=p,

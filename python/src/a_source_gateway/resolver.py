@@ -333,7 +333,10 @@ class Resolver:
                 meta.degraded = True
                 meta.errors.append({"type": "upstream_error", "status": status,
                                     "message": body[:300]})
-        except (asyncio.TimeoutError, httpx.TimeoutException):
+        except (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException):
+            # 注: 3.11 起 asyncio.TimeoutError 就是内建 TimeoutError 的别名;
+            # 3.10 上它们是两个类, 所以两个都捕获 —— 否则 3.10 的超时会漏到通用分支,
+            # 信封里的 errors[].type 会变成 "TimeoutError" 而不是 "timeout"。
             meta.degraded = True
             meta.errors.append({"type": "timeout",
                                 "message": f"上游超过 {int(timeout_s * 1000)}ms 预算, 已降级"})
@@ -524,8 +527,10 @@ class Resolver:
         def sub(m):
             key = m.group(1)
             v = params.get(key, "")
-            if key == "url":
-                return str(v)
+            # 所有占位符一律百分号编码(只有路径参数保留 "/")。
+            # {url} 也不例外: 原样替换会让调用方往查询串里注入额外参数
+            # (如 url=http://x/&admin=true) 或用 "#" 截断查询串。
+            # 合法的 url 参数值是完整 URL, 编码后 ":" "/" 变成 %3A %2F —— 上游解码后还原。
             if key in path_params:
                 return urllib.parse.quote(str(v), safe="/")
             return urllib.parse.quote(str(v), safe="")
@@ -539,11 +544,21 @@ class Resolver:
         if extra:
             sep = "&" if "?" in url else "?"
             url += sep + urllib.parse.urlencode(extra, doseq=True)
-        # 清掉空值查询参数(如 mailto=)
+        # 清掉空值查询参数(如 mailto=); 裸键(没有 "=")保留 —— 与 Go 侧逐行对齐
         if "?" in url:
             base_q, _, q = url.partition("?")
-            parts = [kv for kv in q.split("&")
-                     if kv and not kv.endswith("=") and kv.split("=", 1)[1] != ""]
+            parts: list[str] = []
+            for kv in q.split("&"):
+                if not kv:
+                    continue
+                if kv.endswith("="):
+                    continue                       # 空值(mailto=)
+                if "=" not in kv:
+                    parts.append(kv)                # 裸键(pretty): 保留
+                    continue
+                if kv.split("=", 1)[1] == "":
+                    continue
+                parts.append(kv)
             url = base_q + ("?" + "&".join(parts) if parts else "")
         return url
 

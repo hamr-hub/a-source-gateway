@@ -13,7 +13,7 @@ IMAGE ?= a-source-gateway:local
 URL ?=
 SOURCE ?=
 
-.PHONY: help install dev test network-test lint type fmt validate bench run build clean \
+.PHONY: help install dev test network-test lint type fmt validate bench bench-gateway run build clean \
         gateway-build gateway-test gateway-run \
         docker-build docker-run up down \
         recon verify-source demo parity check
@@ -69,6 +69,18 @@ gateway-test:  ## 跑 Go 网关的单元测试
 
 gateway-run: gateway-build  ## 编译并运行 Go 网关(端口 $(PORT))
 	A_GATEWAY_PORT=$(PORT) ./bin/a-source-gateway
+
+# 基准跑在**主运行时**上。README 上的延迟数字必须来自 Go 网关 ——
+# `make bench` 起的是 Python 参照实现, 两者不是同一个运行时。
+bench-gateway: gateway-build  ## 对 Go 网关跑延迟基准(主运行时)
+	@echo ">>> 启动 Go 网关 $(PORT) ..."
+	@A_GATEWAY_PORT=$(PORT) ./bin/a-source-gateway > /tmp/asg-bench-gw.log 2>&1 & \
+	 echo $$! > /tmp/asg-bench-gw.pid; \
+	 sleep 2; \
+	 $(PY) -m a_source_gateway.bench --url http://127.0.0.1:$(PORT) \
+	   --rounds 3 --cold-rounds 2 --out bench-report.json; \
+	 rc=$$?; kill $$(cat /tmp/asg-bench-gw.pid) 2>/dev/null; \
+	 rm -f /tmp/asg-bench-gw.pid; exit $$rc
 
 # ── 容器 ──────────────────────────────────────────────────────────────
 docker-build:  ## 构建容器镜像

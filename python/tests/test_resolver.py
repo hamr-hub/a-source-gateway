@@ -72,6 +72,63 @@ def test_page_size_is_normalised():
     assert a == b
 
 
+def test_render_keeps_bare_query_keys():
+    """模板里没有 "=" 的查询键(如 ?pretty)必须原样保留, 不能抛 IndexError。
+
+    Go 网关一直是对的(保留裸键), Python 侧曾经直接崩 —— 同一份数据文件在 Go 上能跑,
+    在 MCP 的本地回落路径上却 500。
+    """
+    r = make_resolver(json_handler({}))
+    ep = {"id": "x", "method": "GET",
+          "url_template": "https://example.org/v1/items?pretty&limit={size}",
+          "params": [{"name": "size", "in": "query"}], "response": {"shape": "object"}}
+    url = r._render(ep, QueryRequest(source="s", endpoint="x", params={"size": 10}),
+                    page_size=10)
+    assert url == "https://example.org/v1/items?pretty&limit=10"
+
+
+def test_render_drops_empty_query_values_but_keeps_bare_keys():
+    """空值(mailto=)丢弃, 裸键(pretty)保留 —— 与 Go 侧逐条对齐。"""
+    r = make_resolver(json_handler({}), contact="")   # 不填邮箱, mailto 保持空值
+    ep = {"id": "x", "method": "GET",
+          "url_template": "https://example.org/v1/items?pretty&mailto={email}&rows={rows}",
+          "params": [{"name": "email", "in": "query"}, {"name": "rows", "in": "query"}],
+          "response": {"shape": "object"}}
+    url = r._render(ep, QueryRequest(source="s", endpoint="x",
+                                     params={"email": "", "rows": 10}), page_size=10)
+    assert url == "https://example.org/v1/items?pretty&rows=10"
+
+
+def test_render_percent_encodes_the_url_placeholder():
+    """{url} 必须百分号编码: 否则调用方能往查询串里注入额外参数或用 "#" 截断。
+
+    主机名仍由模板锁定(端点模板里没有主机级占位符), 所以这不是直接 SSRF,
+    但参数注入是可用的 —— scaffold_source.py 生成的镜像/代理型端点就会带 {url}。
+    """
+    r = make_resolver(json_handler({}))
+    ep = {"id": "y", "method": "GET",
+          "url_template": "https://example.org/v1/proxy?target={url}&rows=10",
+          "params": [{"name": "url", "in": "query", "required": True}],
+          "response": {"shape": "object"}}
+    url = r._render(ep, QueryRequest(source="s", endpoint="y", params={
+        "url": "http://169.254.169.254/latest/meta-data/&admin=true"}))
+    assert url == ("https://example.org/v1/proxy?target=http%3A%2F%2F169.254.169.254"
+                   "%2Flatest%2Fmeta-data%2F%26admin%3Dtrue&rows=10")
+    # 注入的参数没有变成独立的查询参数
+    assert "&admin=true" not in url
+    assert "#" not in url
+
+
+def test_render_keeps_slashes_in_path_params():
+    """路径参数里的 "/" 不能被编码(EIA 的 v2 路由会被打成 %2F 而 404)。"""
+    r = make_resolver(json_handler({}))
+    ep = {"id": "z", "method": "GET",
+          "url_template": "https://example.org/v2/{route}/data",
+          "params": [{"name": "route", "in": "path"}], "response": {"shape": "object"}}
+    url = r._render(ep, QueryRequest(source="s", endpoint="z", params={"route": "a/b/c"}))
+    assert url == "https://example.org/v2/a/b/c/data"
+
+
 # ── 查询与投影 ────────────────────────────────────────────────────────────
 async def test_query_projects_list_and_total():
     payload = {"message": {"total-results": 1726791,

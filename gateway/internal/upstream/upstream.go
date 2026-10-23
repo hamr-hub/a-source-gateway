@@ -33,9 +33,9 @@ type Result struct {
 
 // Client is the shared upstream HTTP client.
 type Client struct {
-	http     *http.Client
+	http      *http.Client
 	transport *http.Transport
-	ua       string
+	ua        string
 }
 
 // Options configures the upstream client.
@@ -75,10 +75,44 @@ func New(opt Options) *Client {
 	}
 	return &Client{
 		// No client level timeout: the request deadline is the only budget.
-		http:      &http.Client{Transport: transport},
+		http: &http.Client{
+			Transport:     transport,
+			CheckRedirect: sameHostRedirect,
+		},
 		transport: transport,
 		ua:        opt.UserAgent,
 	}
+}
+
+// sameHostRedirect restricts the redirects to the host of the original
+// request.
+//
+// The Python reference follows the redirects unconditionally (httpx
+// follow_redirects=True). This is a deliberate divergence: an official site
+// that answers with a redirect to another host (an internal address, for
+// example) must not be followed by the gateway, otherwise a caller could
+// use a source endpoint to reach an address it may not reach itself.
+//
+// The host name must stay the same. The port may only change together with
+// the scheme, so that an official site which redirects http to https stays
+// reachable, while a redirect to another port of the same host is refused
+// as well.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	origin := via[0].URL
+	if req.URL.Hostname() != origin.Hostname() {
+		return fmt.Errorf("redirect to another host is not followed: %s (the endpoint template must point at the final URL)",
+			req.URL.Host)
+	}
+	if req.URL.Scheme == origin.Scheme && req.URL.Port() != origin.Port() {
+		return fmt.Errorf("redirect to another port is not followed: %s", req.URL.Host)
+	}
+	return nil
 }
 
 // Close releases the idle connections.

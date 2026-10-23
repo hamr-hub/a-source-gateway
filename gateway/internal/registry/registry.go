@@ -268,10 +268,10 @@ func buildEndpoint(d *parser.Object) (*EndpointSpec, error) {
 	if resp, ok := d.Get("response"); ok {
 		if ro, ok := resp.(*parser.Object); ok {
 			ep.Response = ResponseSpec{
-				MediaType: objString(ro, "media_type", "application/json"),
-				Shape:     objString(ro, "shape", "object"),
-				ItemPath:  objString(ro, "item_path", ""),
-				ItemShape: objString(ro, "item_shape", "list"),
+				MediaType:  objString(ro, "media_type", "application/json"),
+				Shape:      objString(ro, "shape", "object"),
+				ItemPath:   objString(ro, "item_path", ""),
+				ItemShape:  objString(ro, "item_shape", "list"),
 				TotalField: objString(ro, "total_field", ""),
 				Notes:      objString(ro, "notes", ""),
 			}

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -263,9 +264,20 @@ func encodeString(s string) []byte {
 // preserved ("1726791" stays "1726791" and does not become "1.726791e+06"),
 // matching the Python behaviour of int/float round-tripping.
 func UnmarshalOrdered(data []byte) (any, error) {
+	return UnmarshalOrderedContext(context.Background(), data)
+}
+
+// UnmarshalOrderedContext decodes JSON into ordered objects and honours the
+// deadline.
+//
+// The decoding of a big document is not free, so the deadline is checked
+// while the document is walked: a parse that does not fit into the budget
+// must not push the call past it.
+func UnmarshalOrderedContext(ctx context.Context, data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	v, err := decodeValue(dec)
+	d := &orderedDecoder{dec: dec, ctx: ctx}
+	v, err := d.value()
 	if err != nil {
 		return nil, err
 	}
@@ -278,8 +290,30 @@ func UnmarshalOrdered(data []byte) (any, error) {
 	return v, nil
 }
 
-func decodeValue(dec *json.Decoder) (any, error) {
-	tok, err := dec.Token()
+// orderedDecoder decodes JSON into ordered objects.
+type orderedDecoder struct {
+	dec *json.Decoder
+	ctx context.Context
+	// tokens counts the decoded values, the deadline is checked every
+	// checkEvery tokens: often enough to stop a long decoding, rarely
+	// enough to keep the overhead in the noise.
+	tokens int
+}
+
+// checkEvery is the number of decoded values between two deadline checks.
+const checkEvery = 1024
+
+// check reports the deadline of the context, if it is over.
+func (d *orderedDecoder) check() error {
+	d.tokens++
+	if d.tokens%checkEvery == 0 {
+		return d.ctx.Err()
+	}
+	return nil
+}
+
+func (d *orderedDecoder) value() (any, error) {
+	tok, err := d.dec.Token()
 	if err != nil {
 		return nil, err
 	}
@@ -288,8 +322,11 @@ func decodeValue(dec *json.Decoder) (any, error) {
 		switch t {
 		case '{':
 			obj := NewObject()
-			for dec.More() {
-				kt, err := dec.Token()
+			for d.dec.More() {
+				if err := d.check(); err != nil {
+					return nil, err
+				}
+				kt, err := d.dec.Token()
 				if err != nil {
 					return nil, err
 				}
@@ -297,26 +334,29 @@ func decodeValue(dec *json.Decoder) (any, error) {
 				if !ok {
 					return nil, fmt.Errorf("object key is not a string: %v", kt)
 				}
-				val, err := decodeValue(dec)
+				val, err := d.value()
 				if err != nil {
 					return nil, err
 				}
 				obj.Set(key, val)
 			}
-			if _, err := dec.Token(); err != nil { // closing '}'
+			if _, err := d.dec.Token(); err != nil { // closing '}'
 				return nil, err
 			}
 			return obj, nil
 		case '[':
 			arr := []any{}
-			for dec.More() {
-				val, err := decodeValue(dec)
+			for d.dec.More() {
+				if err := d.check(); err != nil {
+					return nil, err
+				}
+				val, err := d.value()
 				if err != nil {
 					return nil, err
 				}
 				arr = append(arr, val)
 			}
-			if _, err := dec.Token(); err != nil { // closing ']'
+			if _, err := d.dec.Token(); err != nil { // closing ']'
 				return nil, err
 			}
 			return arr, nil

@@ -6,13 +6,14 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/cache"
-	"github.com/hamr-hub/a-source-gateway/gateway/internal/envelope"
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/config"
+	"github.com/hamr-hub/a-source-gateway/gateway/internal/envelope"
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/metrics"
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/parser"
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/ratelimit"
@@ -90,13 +91,41 @@ func testRegistry(baseURL string) *registry.Document {
 			Response:    registry.ResponseSpec{MediaType: "application/json", Shape: "object"},
 		}},
 	}
+	// A mirror style endpoint: the target of the query is a parameter of
+	// the upstream URL. scripts/scaffold_source.py can generate such a
+	// template, so the "url" placeholder is reachable through the
+	// documented onboarding flow.
+	mirror := &registry.SourceSpec{
+		ID:      "mirror_source",
+		Name:    "镜像源",
+		Family:  "其他",
+		Aliases: []string{"mirror"},
+		Auth:    registry.AuthSpec{Type: "none"},
+		Endpoints: []*registry.EndpointSpec{{
+			ID:          "proxy",
+			Name:        "代理查询",
+			Method:      "GET",
+			URLTemplate: baseURL + "/proxy?url={url}&rows={size}",
+			Params: []registry.ParamSpec{
+				{Name: "url", In: "query", Type: "string", Required: true, Example: "https://example.org/data"},
+				{Name: "size", In: "query", Type: "int", Default: 10},
+			},
+			CacheTTLS: 900,
+			BudgetMS:  400,
+			Response: registry.ResponseSpec{
+				MediaType: "application/json",
+				Shape:     "object",
+				ItemPath:  "items",
+			},
+		}},
+	}
 	return &registry.Document{
 		SchemaVersion: "1.0",
 		GeneratedAt:   "2026-10-22",
 		BudgetMS:      500,
-		Count:         3,
+		Count:         4,
 		Families:      []string{"学术出版", "其他", "证券监管"},
-		Sources:       []*registry.SourceSpec{crossref, sec, contact},
+		Sources:       []*registry.SourceSpec{crossref, sec, contact, mirror},
 	}
 }
 
@@ -255,6 +284,59 @@ func TestRenderDropsEmptyQueryValues(t *testing.T) {
 	}
 }
 
+// TestRenderEncodesTheURLPlaceholder checks that the value of the "url"
+// placeholder cannot smuggle a query parameter (or a fragment) into the
+// upstream URL.
+//
+// The host of the template is fixed, so the value can only attack the query
+// string: without the encoding it could add a parameter ("&admin=true") or
+// cut the query off ("#").
+func TestRenderEncodesTheURLPlaceholder(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
+	ep := endpointOf(t, r, "mirror_source", "proxy")
+	raw := "http://169.254.169.254/latest/meta-data/&admin=true#frag"
+	url, err := r.Render(ep, QueryRequest{Source: "mirror_source", Endpoint: "proxy",
+		Params: params("url", raw)}, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := neturl.Parse(url)
+	if err != nil {
+		t.Fatalf("the rendered URL is not a valid URL: %v (%s)", err, url)
+	}
+	if parsed.Fragment != "" {
+		t.Errorf("url = %q, the fragment must be encoded", url)
+	}
+	q := parsed.Query()
+	if got := q.Get("admin"); got != "" {
+		t.Errorf("url = %q, the value introduced the parameter admin=%q", url, got)
+	}
+	if len(q) != 2 {
+		t.Errorf("url = %q, the query has %d parameters, want url and rows", url, len(q))
+	}
+	if got := q.Get("url"); got != raw {
+		t.Errorf("url = %q, the url parameter is %q, want %q", url, got, raw)
+	}
+	if !strings.Contains(url, "url=http%3A%2F%2F169.254.169.254%2Flatest%2Fmeta-data%2F%26admin%3Dtrue%23frag") {
+		t.Errorf("url = %q, the value must be percent encoded", url)
+	}
+}
+
+// TestRenderKeepsThePathSlashesOfPathParams is the counterpart of the test
+// above: a path parameter keeps its slashes.
+func TestRenderKeepsThePathSlashesOfPathParams(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
+	ep := endpointOf(t, r, "sec_edgar", "submissions")
+	url, err := r.Render(ep, QueryRequest{Source: "sec_edgar", Endpoint: "submissions",
+		Params: params("cik", "0000320193/extra")}, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(url, "/submissions/CIK0000320193/extra.json") {
+		t.Errorf("url = %q, a path parameter keeps its slashes", url)
+	}
+}
+
 // ── cache key ────────────────────────────────────────────────────────
 
 func TestCacheKeyFormat(t *testing.T) {
@@ -280,16 +362,16 @@ func TestCacheKeyIgnoresEmailAndNormalisesPageSize(t *testing.T) {
 func TestResolveSourceOrder(t *testing.T) {
 	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
 	cases := []struct{ key, want string }{
-		{"crossref", "crossref"},        // exact id
-		{"doi", "crossref"},             // alias
-		{"CROSSREF", "crossref"},        // normalised id
-		{"Crossref", "crossref"},        // normalised name
-		{"sec", "sec_edgar"},            // alias
-		{"edgar", "sec_edgar"},          // alias
-		{"SEC EDGAR", "sec_edgar"},      // normalised name
-		{"", ""},                        // empty
-		{"中文源", ""},                    // no ASCII: no fuzzy match
-		{"nothing-like-this", ""},       // unknown
+		{"crossref", "crossref"},   // exact id
+		{"doi", "crossref"},        // alias
+		{"CROSSREF", "crossref"},   // normalised id
+		{"Crossref", "crossref"},   // normalised name
+		{"sec", "sec_edgar"},       // alias
+		{"edgar", "sec_edgar"},     // alias
+		{"SEC EDGAR", "sec_edgar"}, // normalised name
+		{"", ""},                   // empty
+		{"中文源", ""},                // no ASCII: no fuzzy match
+		{"nothing-like-this", ""},  // unknown
 	}
 	for _, c := range cases {
 		if got := r.ResolveSource(c.key); got != c.want {

@@ -1,8 +1,14 @@
 // Package envelope implements the response envelope of the gateway.
 //
-// The shapes mirror ResponseEnvelope.to_dict() of the Python reference
-// (python/src/a_source_gateway/schema.py) exactly: the same keys, in the
-// same order, with the same null/empty semantics.
+// The shape mirrors ResponseEnvelope.to_dict() of the Python reference
+// (python/src/a_source_gateway/schema.py): the same keys, in the same
+// order, with the same null/empty semantics.
+//
+// The Go gateway adds two keys that the Python reference does not have:
+// meta.trace_id (the correlation id of the request, taken from the inbound
+// request or generated) and meta.parser (the name of the parsing engine
+// that produced the data, "python" or "go"). Both are reported on every
+// path, also on the early error returns.
 package envelope
 
 import (
@@ -38,10 +44,10 @@ type Meta struct {
 	// TraceID correlates the request across the gateway logs, the upstream
 	// call and the parser worker. It is taken from the inbound request
 	// (X-Gateway-Trace-Id or X-Request-Id) or generated.
-	TraceID       string         `json:"trace_id"`
-	SchemaVersion string         `json:"schema_version"`
-	Source        string         `json:"source"`
-	Endpoint      string         `json:"endpoint"`
+	TraceID       string `json:"trace_id"`
+	SchemaVersion string `json:"schema_version"`
+	Source        string `json:"source"`
+	Endpoint      string `json:"endpoint"`
 	// Parser names the engine that produced the data ("python" or "go").
 	Parser     string         `json:"parser"`
 	Upstream   Upstream       `json:"upstream"`
@@ -63,8 +69,8 @@ type Meta struct {
 // Envelope is the response envelope: meta describes the request, data holds
 // the result, fields lists the projected field names.
 type Envelope struct {
-	Meta   Meta   `json:"meta"`
-	Data   any    `json:"data"`
+	Meta   Meta     `json:"meta"`
+	Data   any      `json:"data"`
 	Fields []string `json:"fields"`
 }
 

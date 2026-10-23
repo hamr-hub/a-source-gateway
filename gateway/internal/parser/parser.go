@@ -99,7 +99,10 @@ func (g *GoEngine) Parse(ctx context.Context, shape, mediaType string, body []by
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	payload := g.parseBody(shape, body, spec.MaxRows)
+	payload, err := g.parseBody(ctx, shape, body, spec.MaxRows)
+	if err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -118,26 +121,32 @@ func (g *GoEngine) Parse(ctx context.Context, shape, mediaType string, body []by
 // It mirrors Resolver._parse of the Python reference: CSV/TSV become lists of
 // rows, JSON Lines become a list of objects, XML and text are passed through
 // as markers, and everything else is parsed as JSON with a text fallback.
-func (g *GoEngine) parseBody(shape string, body []byte, maxRows int) any {
+//
+// The context bounds the work: the decoding of a big document is not free
+// and must not push the call past its budget.
+func (g *GoEngine) parseBody(ctx context.Context, shape string, body []byte, maxRows int) (any, error) {
 	switch shape {
 	case "csv", "tsv":
 		delim := ','
 		if shape == "tsv" {
 			delim = '\t'
 		}
-		return parseDelimited(string(body), delim, maxRows)
+		return parseDelimited(ctx, string(body), delim, maxRows)
 	case "jsonl":
-		return parseJSONL(string(body))
+		return parseJSONL(ctx, string(body))
 	case "xml":
-		return NewObjectWith("_xml", truncateBytes(body, JSONLimitBytes))
+		return NewObjectWith("_xml", truncateBytes(body, JSONLimitBytes)), nil
 	case "text":
-		return NewObjectWith("_text", truncateBytes(body, TextLimitBytes))
+		return NewObjectWith("_text", truncateBytes(body, TextLimitBytes)), nil
 	}
-	v, err := UnmarshalOrdered(body)
+	v, err := UnmarshalOrderedContext(ctx, body)
 	if err != nil {
-		return NewObjectWith("_text", truncateBytes(body, TextLimitBytes))
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return NewObjectWith("_text", truncateBytes(body, TextLimitBytes)), nil
 	}
-	return v
+	return v, nil
 }
 
 // NewObjectWith builds a single-key ordered object.
@@ -154,7 +163,7 @@ func truncateBytes(b []byte, limit int) string {
 	return string(b)
 }
 
-func parseDelimited(body string, delim rune, maxRows int) []any {
+func parseDelimited(ctx context.Context, body string, delim rune, maxRows int) ([]any, error) {
 	if maxRows <= 0 {
 		maxRows = JSONLMaxRows
 	}
@@ -164,6 +173,11 @@ func parseDelimited(body string, delim rune, maxRows int) []any {
 	r.FieldsPerRecord = -1
 	r.LazyQuotes = true
 	for i := 0; i < maxRows; i++ {
+		if i%checkEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		rec, err := r.Read()
 		if err != nil {
 			break
@@ -174,18 +188,24 @@ func parseDelimited(body string, delim rune, maxRows int) []any {
 		}
 		rows = append(rows, row)
 	}
-	return rows
+	return rows, nil
 }
 
-func parseJSONL(body string) []any {
+func parseJSONL(ctx context.Context, body string) ([]any, error) {
 	out := []any{}
 	for _, line := range strings.Split(body, "\n") {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		v, err := UnmarshalOrdered([]byte(line))
+		v, err := UnmarshalOrderedContext(ctx, []byte(line))
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 		out = append(out, v)
@@ -193,7 +213,7 @@ func parseJSONL(body string) []any {
 			break
 		}
 	}
-	return out
+	return out, nil
 }
 
 // Extract locates the item list and the total inside a decoded payload.
@@ -231,10 +251,14 @@ func Extract(payload any, spec Spec) (any, *int) {
 		if obj, ok := payload.(*Object); ok {
 			if raw, ok := obj.Get("_xml"); ok {
 				s, _ := raw.(string)
-				data = map[string]any{
-					"_xml_bytes": len([]byte(s)),
-					"_truncated":  utf8.RuneCountInString(s) >= JSONLimitBytes,
-				}
+				// The key order is the one of the Python reference
+				// ({"_xml_bytes": N, "_truncated": bool}), so that the
+				// same request produces the same bytes whichever engine
+				// is active.
+				summary := NewObject()
+				summary.Set("_xml_bytes", len([]byte(s)))
+				summary.Set("_truncated", utf8.RuneCountInString(s) >= JSONLimitBytes)
+				data = summary
 			}
 		}
 	}

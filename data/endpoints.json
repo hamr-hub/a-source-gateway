@@ -336,7 +336,8 @@
       {
         "id": "sdn_xml",
         "name": "SDN 名单 XML",
-        "url_template": "https://www.treasury.gov/ofac/downloads/sdn.xml",
+        "url_template": "https://sanctionslistservice.ofac.treas.gov/api/publicationpreview/exports/sdn.xml",
+        "_host_note": "www.treasury.gov/ofac/downloads/sdn.xml 会 302 到本主机;这里直接钉在最终主机, 网关只跟随同主机跳转",
         "response": {
           "shape": "xml",
           "media_type": "application/xml",
@@ -369,7 +370,8 @@
       {
         "id": "sdn_csv",
         "name": "SDN 名单 CSV",
-        "url_template": "https://www.treasury.gov/ofac/downloads/sdn.csv",
+        "url_template": "https://sanctionslistservice.ofac.treas.gov/api/publicationpreview/exports/sdn.csv",
+        "_host_note": "www.treasury.gov/ofac/downloads/sdn.csv 会 302 到本主机;这里直接钉在最终主机, 网关只跟随同主机跳转",
         "response": {
           "shape": "csv",
           "media_type": "text/csv",
@@ -1796,7 +1798,8 @@
       {
         "id": "monthly_csv",
         "name": "月度成交增量 CSV",
-        "url_template": "http://prod.publicdata.landregistry.gov.uk.s3-website-eu-west-1.amazonaws.com/pp-monthly-update-new-version.csv",
+        "url_template": "http://prod1.publicdata.landregistry.gov.uk.s3-website-eu-west-1.amazonaws.com/pp-monthly-update-new-version.csv",
+        "_host_note": "prod. 会 301 到 prod1.(不同主机名);这里直接钉在最终主机, 网关只跟随同主机跳转",
         "response": {
           "shape": "csv",
           "media_type": "text/csv",

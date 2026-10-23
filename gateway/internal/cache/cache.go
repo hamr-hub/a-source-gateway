@@ -16,12 +16,12 @@ import (
 
 // Entry is one cached response.
 type Entry struct {
-	Value    any
-	StoredAt time.Time
+	Value     any
+	StoredAt  time.Time
 	ExpiresAt time.Time
-	Size     int
-	Hits     int
-	LastHit  time.Time
+	Size      int
+	Hits      int
+	LastHit   time.Time
 }
 
 // Stats is the cache statistics block reported by GET /v1/stats.

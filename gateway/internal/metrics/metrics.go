@@ -46,9 +46,9 @@ func New() *Metrics {
 
 // Observation is one counted request.
 type Observation struct {
-	Source   string
-	Degraded bool
-	Cached   bool
+	Source    string
+	Degraded  bool
+	Cached    bool
 	LatencyMS int
 	// ErrorTypes are the types of the errors of the response; "stale" is
 	// not counted as an error.

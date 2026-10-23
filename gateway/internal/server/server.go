@@ -209,11 +209,15 @@ func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 	items := s.resolver.ListSources(family, keyword)
+	// The count is the number of matching sources before the limit cuts
+	// the list, exactly like the Python reference: meta.count is the
+	// number of matches, data is the truncated list.
+	count := len(items)
 	if len(items) > limit {
 		items = items[:limit]
 	}
 	meta := parser.NewObject()
-	meta.Set("count", len(items))
+	meta.Set("count", count)
 	meta.Set("family", family)
 	meta.Set("q", keyword)
 	meta.Set("latency_ms", 0)

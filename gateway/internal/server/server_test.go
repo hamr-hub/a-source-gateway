@@ -118,6 +118,36 @@ func TestRoutesMetadata(t *testing.T) {
 	}
 }
 
+// TestListSourcesCountsBeforeTheLimit checks that meta.count is the number
+// of matching sources before the limit cuts the list.
+//
+// The Python reference reports the count of the matches and truncates only
+// the data list; the Go gateway does the same.
+func TestListSourcesCountsBeforeTheLimit(t *testing.T) {
+	s := realServer(t)
+	total := len(s.resolver.Registry().Sources)
+	rec, body := do(t, s, "GET", "/v1/sources?limit=5", "")
+	if rec.Code != 200 {
+		t.Fatalf("GET /v1/sources?limit=5 = %d", rec.Code)
+	}
+	var doc struct {
+		Meta struct {
+			Count int `json:"count"`
+		} `json:"meta"`
+		Data []any `json:"data"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Meta.Count != total {
+		t.Errorf("meta.count = %d, want the number of matches (%d)", doc.Meta.Count, total)
+	}
+	if len(doc.Data) != 5 {
+		t.Errorf("data = %d entries, want 5", len(doc.Data))
+	}
+}
+
+// TestQueryStatusCodes covers the client errors of the query routes.
 func TestQueryStatusCodes(t *testing.T) {
 	s := realServer(t)
 
@@ -134,6 +164,18 @@ func TestQueryStatusCodes(t *testing.T) {
 	rec, _ = do(t, s, "GET", "/v1/query?source=crossref&endpoint=works&params=%7B", "")
 	if rec.Code != 400 {
 		t.Errorf("GET /v1/query (broken params) = %d, want 400", rec.Code)
+	}
+	// Params that are not an object are a client error too. The Python
+	// reference answers 200 with a bad_template error here; the Go gateway
+	// rejects the request, which is the stricter and more useful
+	// behaviour. The Python side is aligned to it.
+	rec, _ = do(t, s, "GET", "/v1/query?source=crossref&endpoint=works&params=%5B1%2C2%5D", "")
+	if rec.Code != 400 {
+		t.Errorf("GET /v1/query (params is an array) = %d, want 400", rec.Code)
+	}
+	rec, _ = do(t, s, "POST", "/v1/query", `{"source":"crossref","endpoint":"works","params":[1,2]}`)
+	if rec.Code != 422 {
+		t.Errorf("POST /v1/query (params is an array) = %d, want 422", rec.Code)
 	}
 	// A limit outside of the allowed range is a validation error.
 	rec, _ = do(t, s, "POST", "/v1/query", `{"source":"crossref","endpoint":"works","limit":900}`)

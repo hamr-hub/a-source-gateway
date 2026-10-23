@@ -8,9 +8,10 @@
 
 这个项目只有两类东西:
 
-1. **数据文件** —— `data/source_inventory.csv`(海外 107 个源的基本信息)、
-   `data/source_inventory_cn.csv`(国内 34 个源 = 已接入 2 + 候选 32,比海外多一列 `优先级`)、
-   `data/endpoints.json`(56 个源的结构化端点定义)、`data/aliases.json`(源名 → 常用简称)。
+1. **数据文件** —— `data/source_inventory.csv`(海外源的基本信息)、
+   `data/source_inventory_cn.csv`(国内源,比海外多一列 `优先级`)、
+   `data/endpoints.json`(结构化端点定义)、`data/aliases.json`(源名 → 常用简称)。
+   (各文件的具体行数以当前文件为准 —— 源数会随加源增长,别在文档里写死。)
    **加源只改这里。** 两份清单按 `国别` 分工,规则见 [`AGENTS.md`](AGENTS.md) 规则 3.1。
 2. **代码** —— `gateway/`(Go 网关)与 `src/a_source_gateway/`(Python 解析面)。负责把数据文件
    变成可调用的接口。

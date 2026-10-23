@@ -86,3 +86,82 @@ func TestFetchConnectionError(t *testing.T) {
 		t.Errorf("error = %v, want a connection error", err)
 	}
 }
+
+// TestFetchDoesNotFollowARedirectToAnotherHost checks that a redirect to
+// another host is not followed: an official site must not be able to send
+// the gateway to an internal address.
+//
+// The Python reference follows the redirects unconditionally; this is a
+// deliberate divergence, see sameHostRedirect.
+func TestFetchDoesNotFollowARedirectToAnotherHost(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("the internal answer"))
+	}))
+	defer other.Close()
+
+	// "localhost" is another host name than "127.0.0.1", even when it
+	// points at the same machine.
+	target := strings.Replace(other.URL, "127.0.0.1", "localhost", 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target+"/secret", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := New(Options{PoolSize: 2, VerifyTLS: true})
+	_, err := c.Fetch(context.Background(), "GET", srv.URL, nil, 1024)
+	if err == nil {
+		t.Fatal("expected an error: the redirect to another host must not be followed")
+	}
+	if !strings.Contains(err.Error(), "another host") {
+		t.Errorf("error = %v, want a cross host redirect error", err)
+	}
+}
+
+// TestFetchDoesNotFollowARedirectToAnotherPort checks that a redirect to
+// another port of the same host is not followed either.
+func TestFetchDoesNotFollowARedirectToAnotherPort(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("the internal answer"))
+	}))
+	defer other.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/secret", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := New(Options{PoolSize: 2, VerifyTLS: true})
+	_, err := c.Fetch(context.Background(), "GET", srv.URL, nil, 1024)
+	if err == nil {
+		t.Fatal("expected an error: the redirect to another port must not be followed")
+	}
+	if !strings.Contains(err.Error(), "another port") {
+		t.Errorf("error = %v, want a cross port redirect error", err)
+	}
+}
+
+// TestFetchFollowsARedirectInsideTheSameHost checks that the redirects
+// inside the same host are still followed: an official site that answers
+// http with a redirect to https must stay reachable.
+func TestFetchFollowsARedirectInsideTheSameHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/from" {
+			http.Redirect(w, r, "/to", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("arrived"))
+	}))
+	defer srv.Close()
+
+	c := New(Options{PoolSize: 2, VerifyTLS: true})
+	res, err := c.Fetch(context.Background(), "GET", srv.URL+"/from", nil, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200", res.Status)
+	}
+	if string(res.Body) != "arrived" {
+		t.Errorf("body = %q, want the answer of the redirect target", res.Body)
+	}
+}

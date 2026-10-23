@@ -600,7 +600,8 @@ def main(argv: list[str] | None = None) -> int:
         if is_cn:
             print(f"\n✓ 已写入国内候选清单 {csv_path}(备份在 {out_dir}/{csv_path.name}.bak)")
             print("  国内源只入候选池:本次未写 endpoints.json,网关运行时尚未加载该源。")
-            print("  接入网关还需另外完成:端点定义 + 别名 + 运行时『合并加载两份清单』改造。")
+            print("  接入网关还需另外完成:端点定义(endpoints.json) + ASCII 别名(aliases.json)。")
+            print("  运行时已按『海外清单 + 国内清单』双加载,不需要再改代码。")
         else:
             print(f"\n✓ 已写回 {data_dir}(备份在 {out_dir}/*.bak)")
     else:

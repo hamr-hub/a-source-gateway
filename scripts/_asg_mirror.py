@@ -268,8 +268,10 @@ def render_url(ep: dict, params: dict | None, page_size: int | None = None,
     def sub(m):
         key = m.group(1)
         v = params.get(key, "")
-        if key == "url":
-            return str(v)
+        # 所有占位符一律百分号编码(只有路径参数保留 "/")。
+        # {url} 也不例外: 原样替换会让调用方往查询串里注入额外参数
+        # (如 url=http://x/&admin=true) 或用 "#" 截断查询串。
+        # 合法的 url 参数值是完整 URL, 编码后 ":" "/" 变成 %3A %2F —— 上游解码后还原。
         if key in path_params:
             return urllib.parse.quote(str(v), safe="/")
         return urllib.parse.quote(str(v), safe="")
@@ -283,8 +285,18 @@ def render_url(ep: dict, params: dict | None, page_size: int | None = None,
         url += sep + urllib.parse.urlencode(extra, doseq=True)
     if "?" in url:
         base_q, _, q = url.partition("?")
-        parts = [kv for kv in q.split("&")
-                 if kv and not kv.endswith("=") and kv.split("=", 1)[1] != ""]
+        parts: list[str] = []
+        for kv in q.split("&"):
+            if not kv:
+                continue
+            if kv.endswith("="):
+                continue                       # 空值(mailto=)
+            if "=" not in kv:
+                parts.append(kv)                # 裸键(pretty): 保留
+                continue
+            if kv.split("=", 1)[1] == "":
+                continue
+            parts.append(kv)
         url = base_q + ("?" + "&".join(parts) if parts else "")
     return url
 

@@ -2,7 +2,9 @@ package parser
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -245,6 +247,46 @@ func TestGoEngineRespectsMaxRows(t *testing.T) {
 	rows, _ := res.Data.([]any)
 	if len(rows) != 2 {
 		t.Errorf("rows = %d, want 2", len(rows))
+	}
+}
+
+// TestGoEngineXMLProjectionKeepsTheKeyOrder checks the key order of the XML
+// projection: it is the insertion order of the Python reference
+// ({"_xml_bytes": N, "_truncated": bool}), not the sorted order of a Go map.
+func TestGoEngineXMLProjectionKeepsTheKeyOrder(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<root><a>1</a></root>")
+	res, err := eng.Parse(context.Background(), "xml", "application/xml", body, Spec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Marshal(res.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`{"_xml_bytes":%d,"_truncated":false}`, len(body))
+	if string(out) != want {
+		t.Errorf("data = %s, want %s", out, want)
+	}
+}
+
+// TestEncodeBodyMatchesTheOneShotEncoding checks that the chunked encoding
+// of the body is byte identical to the one shot encoding: the wire protocol
+// must not change.
+func TestEncodeBodyMatchesTheOneShotEncoding(t *testing.T) {
+	for _, size := range []int{0, 1, 2, 3, 100, 96 * 1024, 96*1024 + 1, 200_000} {
+		body := make([]byte, size)
+		for i := range body {
+			body[i] = byte(i % 251)
+		}
+		got, err := encodeBody(context.Background(), body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := base64.StdEncoding.EncodeToString(body)
+		if got != want {
+			t.Errorf("size %d: the chunked encoding differs from the one shot encoding", size)
+		}
 	}
 }
 

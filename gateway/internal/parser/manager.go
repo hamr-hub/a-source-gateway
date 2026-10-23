@@ -2,6 +2,7 @@ package parser
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 )
@@ -77,6 +78,12 @@ func (m *Manager) Parse(ctx context.Context, shape, mediaType string, body []byt
 		return res, nil
 	}
 	if active.Name() == "go" {
+		return nil, err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		// The request ran out of time, not the worker: the Python plane
+		// stays active. The Go fallback would not have any time left
+		// either, the deadline is gone for both engines.
 		return nil, err
 	}
 	m.logger.Printf("warning: python parser worker failed (%v); falling back to the Go engine", err)

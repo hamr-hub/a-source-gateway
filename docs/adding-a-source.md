@@ -57,7 +57,7 @@ python3 scripts/scaffold_source.py --recon /tmp/recon.json --name "My Journal AP
 | 清单文件 | 装什么 | 列 | 网关运行时 |
 |---|---|---|---|
 | `data/source_inventory.csv` | **海外**源(`国别` = 美国/欧盟/英国/全球/多国/…) | 17 列 | 全量加载 |
-| `data/source_inventory_cn.csv` | **国内**源(`国别` = 中国) | 18 列 | 只加载"已接入"的行 |
+| `data/source_inventory_cn.csv` | **国内**源(`国别` ∈ {中国, 中国大陆, 中华人民共和国}) | 18 列 | 只加载"已接入"的行 |
 
 **判定只看 `国别` 列**:写 `中国` → 落国内清单;其余 → 落海外清单。不要靠源名、域名猜,
 也不要因为国内清单还没进运行时就把国内行抄进海外清单 —— 两份都有,字段必然漂移。

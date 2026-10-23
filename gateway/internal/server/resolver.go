@@ -95,15 +95,15 @@ func (c *cacheValue) MarshalJSON() ([]byte, error) {
 
 // Resolver executes queries against the registered sources.
 type Resolver struct {
-	cfg      *config.Config
-	reg      *registry.Document
-	cache    *cache.Cache
-	client   *upstream.Client
-	parsers  *parser.Manager
-	metrics  *metrics.Metrics
-	limiter  *ratelimit.Limiter
-	logger   *log.Logger
-	offline  bool
+	cfg     *config.Config
+	reg     *registry.Document
+	cache   *cache.Cache
+	client  *upstream.Client
+	parsers *parser.Manager
+	metrics *metrics.Metrics
+	limiter *ratelimit.Limiter
+	logger  *log.Logger
+	offline bool
 
 	mu           sync.Mutex
 	tooLarge     map[string]bool
@@ -219,6 +219,15 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 	if meta.TraceID == "" {
 		meta.TraceID = envelope.NewTraceID()
 	}
+
+	// The hard deadline of the call: the upstream call, the parse and the
+	// serialisation all have to be done before it.
+	deadline := t0.Add(time.Duration(budget) * time.Millisecond)
+	// The deadline of the work phases (upstream and parse). The reserve is
+	// kept for the serialisation: the projection, the cache write and the
+	// encoding of the envelope. The parse phase never gets a fresh budget,
+	// it only gets what is left of the work deadline.
+	workDeadline := deadline.Add(-time.Duration(r.cfg.ReserveMS) * time.Millisecond)
 
 	rid := r.ResolveSource(req.Source)
 	src := r.reg.Source(rid)
@@ -346,6 +355,9 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 	}
 
 	// ── live fetch ──────────────────────────────────────────────────
+	// The upstream call is bounded by the work deadline: the reserve is
+	// not available to the upstream, it is kept for the parse and the
+	// serialisation.
 	remaining := budget - int(time.Since(t0).Milliseconds()) - r.cfg.ReserveMS
 	cap := r.cfg.UpstreamBudgetMS
 	if strict {
@@ -407,14 +419,22 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 		return buildEnvelope(meta, data, req.Fields)
 	}
 
-	payload, parseErr := r.parse(ep, res.Body, meta.TraceID)
+	payload, parseErr := r.parseInBudget(ep, res.Body, meta.TraceID, workDeadline)
 	// The engine that actually produced the data is reported, also when the
 	// Python worker failed and the Go engine took over.
 	meta.Parser = r.ParserName()
 	if parseErr != nil {
 		meta.Degraded = true
-		meta.AddError("parse_error", truncateMsg(parseErr.Error()))
-		meta.SetFallback(url, ep.Method, "网关取数失败;可直连上游")
+		if isDeadlineError(parseErr) {
+			// The parse did not fit into the remaining budget: the call
+			// degrades exactly like an upstream timeout, the caller gets
+			// the fallback block instead of a late answer.
+			meta.AddError("timeout", fmt.Sprintf("解析超过剩余预算, 已降级(上游 %dms)", meta.Upstream.LatencyMS))
+			meta.SetFallback(url, ep.Method, "网关预算内解析不完;可直连上游, 或稍后重试(后台正在补数)")
+		} else {
+			meta.AddError("parse_error", truncateMsg(parseErr.Error()))
+			meta.SetFallback(url, ep.Method, "网关取数失败;可直连上游")
+		}
 		r.scheduleWarm(ep, epKey, url, cacheKey)
 		data, _, _ := r.fallbackData(val)
 		meta.Cached = val != nil
@@ -427,7 +447,14 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 
 	if status < 400 {
 		ttl := r.adaptiveTTL(ep, cacheKey)
-		r.cache.Put(cacheKey, &cacheValue{Data: payload, Status: status, Total: payload.total, Truncated: payload.truncated}, ttl)
+		// The cache write serialises the whole payload. When the budget is
+		// already used up, the background refresh fills the entry instead
+		// of pushing the call past its deadline.
+		if time.Now().Before(deadline) {
+			r.cache.Put(cacheKey, &cacheValue{Data: payload, Status: status, Total: payload.total, Truncated: payload.truncated}, ttl)
+		} else {
+			r.scheduleWarm(ep, epKey, url, cacheKey)
+		}
 	}
 	data, total, truncated := parser.Trim(payload.data, payload.total, req.Limit, req.Fields, payload.truncated)
 	meta.Count = countOf(data)
@@ -453,7 +480,11 @@ type parseResult struct {
 }
 
 // parse runs the active parser engine for an endpoint.
-func (r *Resolver) parse(ep *registry.EndpointSpec, body []byte, traceID string) (*parseResult, error) {
+//
+// The context bounds the parse: the caller derives it from the request
+// budget, so a parse that does not fit is cancelled instead of overrunning
+// the budget.
+func (r *Resolver) parse(ctx context.Context, ep *registry.EndpointSpec, body []byte, traceID string) (*parseResult, error) {
 	spec := parser.Spec{
 		ItemPath:   ep.Response.ItemPath,
 		TotalField: ep.Response.TotalField,
@@ -463,13 +494,29 @@ func (r *Resolver) parse(ep *registry.EndpointSpec, body []byte, traceID string)
 		MaxRows:    r.cfg.MaxParseRows,
 		TraceID:    traceID,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(r.cfg.BudgetMS)*time.Millisecond)
-	defer cancel()
 	res, err := r.parsers.Parse(ctx, ep.Response.Shape, ep.Response.MediaType, body, spec)
 	if err != nil {
 		return nil, err
 	}
 	return &parseResult{data: res.Data, total: res.Total, truncated: res.Truncated}, nil
+}
+
+// parseInBudget runs the parse under the deadline that is left.
+//
+// The parse phase never gets a fresh budget: it runs with the time that is
+// left of the work deadline (the request budget minus the elapsed time
+// minus the reserve). A parse that starts with 20ms left is cancelled after
+// 20ms, not after a fresh budget; a parse that does not fit degrades the
+// call like an upstream timeout.
+func (r *Resolver) parseInBudget(ep *registry.EndpointSpec, body []byte, traceID string, workDeadline time.Time) (*parseResult, error) {
+	ctx, cancel := context.WithDeadline(context.Background(), workDeadline)
+	defer cancel()
+	return r.parse(ctx, ep, body, traceID)
+}
+
+// isDeadlineError reports whether the error is a deadline or a cancellation.
+func isDeadlineError(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // fetch performs one upstream call inside the given budget.
@@ -616,7 +663,11 @@ func (r *Resolver) scheduleWarm(ep *registry.EndpointSpec, epKey, url, cacheKey 
 			return
 		}
 		if res.Status < 400 {
-			payload, perr := r.parse(ep, res.Body, "")
+			// The background refresh has its own budget: the parse of a
+			// big document must not be cut off at the user request budget.
+			parseCtx, cancel := context.WithTimeout(context.Background(), budget)
+			payload, perr := r.parse(parseCtx, ep, res.Body, "")
+			cancel()
 			if perr == nil {
 				ttl := r.adaptiveTTL(ep, cacheKey)
 				r.cache.Put(cacheKey, &cacheValue{Data: payload.data, Status: res.Status, Total: payload.total, Truncated: payload.truncated}, ttl)
@@ -865,7 +916,9 @@ func (r *Resolver) Describe(sourceID, endpointID string) *parser.Object {
 
 // Render builds the upstream URL of an endpoint.
 //
-// Path parameters keep their slashes, everything else is percent encoded.
+// Every placeholder value is percent encoded, the "url" one included: a
+// caller must not be able to smuggle a query parameter or a fragment into
+// the upstream URL. Only the path parameters keep their slashes.
 // Parameters that the template does not use are appended as a query string,
 // empty values are dropped and the cache buster never reaches the upstream.
 func (r *Resolver) Render(ep *registry.EndpointSpec, req QueryRequest, pageSize int) (string, error) {
@@ -933,9 +986,10 @@ func (r *Resolver) Render(ep *registry.EndpointSpec, req QueryRequest, pageSize 
 			return ""
 		}
 		sv := pyStr(v)
-		if key == "url" {
-			return sv
-		}
+		// Every placeholder value is percent encoded, the "url" one
+		// included. A raw value would let the caller add a query parameter
+		// ("&admin=true") or cut the query off ("#") on a mirror style
+		// endpoint, so it is encoded like every other value.
 		if pathParams[key] {
 			return quoteValue(sv, "/")
 		}

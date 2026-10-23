@@ -62,3 +62,6 @@ gh*.json
 # build-registry / registry-dump 的导出物
 registry*.json
 
+
+# Go 网关编译产物
+bin/

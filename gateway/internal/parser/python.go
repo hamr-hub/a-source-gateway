@@ -18,15 +18,21 @@ import (
 // Python worker protocol (newline-delimited JSON over stdin/stdout).
 //
 // Request:  {"id":"...","op":"parse","shape":"...","media_type":"...",
-//	          "body_b64":"...","spec":{...}}
+//
+//	"body_b64":"...","spec":{...}}
+//
 // Response: {"id":"...","ok":true,"items":[...],"total":123,"truncated":false,
-//	          "fields":[...],"elapsed_ms":3.2}
-//	          {"id":"...","ok":false,"error":"..."}
+//
+//	"fields":[...],"elapsed_ms":3.2}
+//	{"id":"...","ok":false,"error":"..."}
 //
 // "op":"ping" and "op":"shutdown" are supported as well.
 const (
 	workerModule = "a_source_gateway.parser_worker"
 	pingTimeout  = 5 * time.Second
+	// closeWait is how long the shutdown waits for the worker slot before
+	// it stops the worker without the polite shutdown request.
+	closeWait = 500 * time.Millisecond
 )
 
 // PythonEngine talks to the Python parsing plane.
@@ -34,12 +40,26 @@ type PythonEngine struct {
 	python string
 	srcDir string
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	seq    int
-	broken bool
+	// sem serialises the protocol. The worker answers one request at a
+	// time, so the gateway keeps a single request in flight and the
+	// responses stay in order. The acquisition is context aware: a request
+	// whose deadline expires while it waits stops waiting instead of
+	// inheriting the parse time of the request in front of it.
+	sem chan struct{}
+
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  *bufio.Reader
+	pending map[string]chan workerReply
+	seq     int
+	broken  bool
+}
+
+// workerReply is one response line of the worker.
+type workerReply struct {
+	obj *Object
+	err error
 }
 
 // StartPython launches the Python worker and verifies that it answers a ping.
@@ -50,7 +70,12 @@ func StartPython(ctx context.Context, python, srcDir string) (*PythonEngine, err
 	if python == "" {
 		python = "python3"
 	}
-	e := &PythonEngine{python: python, srcDir: srcDir}
+	e := &PythonEngine{
+		python:  python,
+		srcDir:  srcDir,
+		sem:     make(chan struct{}, 1),
+		pending: map[string]chan workerReply{},
+	}
 	cmd := exec.Command(python, "-m", workerModule)
 	env := os.Environ()
 	if srcDir != "" {
@@ -73,6 +98,7 @@ func StartPython(ctx context.Context, python, srcDir string) (*PythonEngine, err
 	e.cmd = cmd
 	e.stdin = stdin
 	e.stdout = bufio.NewReader(stdout)
+	go e.readLoop()
 
 	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
 	defer cancel()
@@ -89,40 +115,59 @@ func (e *PythonEngine) Name() string { return "python" }
 // Close shuts the worker down.
 func (e *PythonEngine) Close() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.cmd == nil {
+	cmd := e.cmd
+	stdin := e.stdin
+	broken := e.broken
+	e.mu.Unlock()
+	if cmd == nil {
 		return nil
 	}
-	if !e.broken && e.stdin != nil {
-		_, _ = e.writeLine(map[string]any{"op": "shutdown", "id": e.nextID()})
+	// Ask the worker to stop. The request is best effort: the worker also
+	// exits when its stdin is closed.
+	if !broken && stdin != nil {
+		select {
+		case e.sem <- struct{}{}:
+			e.mu.Lock()
+			_, _ = e.writeLine(map[string]any{"op": "shutdown", "id": e.nextID()})
+			e.mu.Unlock()
+			<-e.sem
+		case <-time.After(closeWait):
+			// A request is still in flight; skip the polite shutdown.
+		}
 	}
-	if e.stdin != nil {
-		_ = e.stdin.Close()
+	if stdin != nil {
+		_ = stdin.Close()
 	}
 	done := make(chan struct{})
 	go func() {
-		_ = e.cmd.Wait()
+		_ = cmd.Wait()
 		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		if e.cmd.Process != nil {
-			_ = e.cmd.Process.Kill()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
 		}
 		<-done
 	}
+	e.mu.Lock()
 	e.cmd = nil
+	e.mu.Unlock()
 	return nil
 }
 
 // Parse implements Engine.
 func (e *PythonEngine) Parse(ctx context.Context, shape, mediaType string, body []byte, spec Spec) (*Result, error) {
+	encoded, err := encodeBody(ctx, body)
+	if err != nil {
+		return nil, err
+	}
 	req := map[string]any{
 		"op":         "parse",
 		"shape":      shape,
 		"media_type": mediaType,
-		"body_b64":   base64.StdEncoding.EncodeToString(body),
+		"body_b64":   encoded,
 		"trace_id":   spec.TraceID,
 		"spec": map[string]any{
 			"item_path":   spec.ItemPath,
@@ -138,6 +183,34 @@ func (e *PythonEngine) Parse(ctx context.Context, shape, mediaType string, body 
 		return nil, err
 	}
 	return resultFromWire(obj)
+}
+
+// encodeBody encodes the body for the wire.
+//
+// The encoding of a big body is not free, so it is done in chunks and the
+// deadline is honoured between the chunks: the encoding belongs to the
+// parse phase and must not push the call past its budget.
+func encodeBody(ctx context.Context, body []byte) (string, error) {
+	var b strings.Builder
+	b.Grow(base64.StdEncoding.EncodedLen(len(body)))
+	enc := base64.NewEncoder(base64.StdEncoding, &b)
+	const chunk = 96 * 1024 // a multiple of three, so the encoder holds nothing back
+	for i := 0; i < len(body); i += chunk {
+		end := i + chunk
+		if end > len(body) {
+			end = len(body)
+		}
+		if _, err := enc.Write(body[i:end]); err != nil {
+			return "", err
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 // resultFromWire maps a worker response onto a Result.
@@ -212,64 +285,105 @@ func (e *PythonEngine) writeLine(v any) ([]byte, error) {
 	return b, nil
 }
 
+// readLoop reads the response lines of the worker and hands them to the
+// waiting requests.
+//
+// There is exactly one reader for the whole worker: the responses are
+// matched by id, so the response of a request that gave up (its deadline
+// expired) is dropped instead of being handed to the next request.
+func (e *PythonEngine) readLoop() {
+	for {
+		line, err := e.stdout.ReadBytes('\n')
+		if err != nil {
+			e.mu.Lock()
+			e.broken = true
+			e.mu.Unlock()
+			e.failPending(err)
+			return
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		v, err := UnmarshalOrdered(line)
+		if err != nil {
+			continue // not a protocol line, ignore
+		}
+		obj, ok := v.(*Object)
+		if !ok {
+			continue
+		}
+		gotID, _ := obj.Get("id")
+		s, _ := gotID.(string)
+		e.mu.Lock()
+		ch, waiting := e.pending[s]
+		if waiting {
+			delete(e.pending, s)
+		}
+		e.mu.Unlock()
+		if !waiting {
+			continue // a late response of an abandoned request
+		}
+		ch <- workerReply{obj: obj}
+	}
+}
+
+// failPending wakes up the requests that wait for a response of a worker
+// that died.
+func (e *PythonEngine) failPending(err error) {
+	e.mu.Lock()
+	pending := e.pending
+	e.pending = map[string]chan workerReply{}
+	e.mu.Unlock()
+	for _, ch := range pending {
+		ch <- workerReply{err: err}
+	}
+}
+
 // roundTrip sends one request and waits for the matching response.
 //
-// The worker mutex serialises requests: the worker processes them one at a
-// time anyway, and serialising keeps the request/response correlation simple.
+// The worker slot is acquired in a context aware way: a request whose
+// deadline expires while it waits for the slot stops waiting and reports
+// the deadline, instead of blocking until the request in front of it has
+// finished its parse.
 func (e *PythonEngine) roundTrip(ctx context.Context, req map[string]any) (*Object, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case e.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-e.sem }()
+
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.broken || e.cmd == nil {
+		e.mu.Unlock()
 		return nil, errors.New("python parser worker is not running")
 	}
 	req["id"] = e.nextID()
 	id, _ := req["id"].(string)
+	ch := make(chan workerReply, 1)
+	e.pending[id] = ch
 	if _, err := e.writeLine(req); err != nil {
+		delete(e.pending, id)
 		e.broken = true
+		e.mu.Unlock()
 		return nil, err
 	}
-
-	type readResult struct {
-		obj *Object
-		err error
-	}
-	ch := make(chan readResult, 1)
-	go func() {
-		for {
-			line, err := e.stdout.ReadBytes('\n')
-			if err != nil {
-				ch <- readResult{nil, err}
-				return
-			}
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
-				continue
-			}
-			v, err := UnmarshalOrdered(line)
-			if err != nil {
-				continue // not a protocol line, ignore
-			}
-			obj, ok := v.(*Object)
-			if !ok {
-				continue
-			}
-			gotID, _ := obj.Get("id")
-			s, _ := gotID.(string)
-			if s != "" && s != id {
-				continue // a late response of an abandoned request
-			}
-			ch <- readResult{obj, nil}
-			return
-		}
-	}()
+	e.mu.Unlock()
 
 	select {
 	case <-ctx.Done():
-		e.broken = true
+		// The request gave up: the worker is still busy, but its late
+		// response is dropped by the reader, so the worker stays usable.
+		e.mu.Lock()
+		delete(e.pending, id)
+		e.mu.Unlock()
 		return nil, ctx.Err()
 	case r := <-ch:
 		if r.err != nil {
-			e.broken = true
 			return nil, r.err
 		}
 		return r.obj, nil

@@ -69,25 +69,25 @@ type Config struct {
 //     "none" (any other value keeps verification on).
 func Load() *Config {
 	c := &Config{
-		Host:              envStr("A_GATEWAY_HOST", "127.0.0.1"),
-		Port:              envInt("A_GATEWAY_PORT", 8848),
-		Workers:           envInt("A_GATEWAY_WORKERS", 1),
-		BudgetMS:          envInt("A_GATEWAY_BUDGET_MS", 500),
-		UpstreamBudgetMS:  envInt("A_GATEWAY_UPSTREAM_BUDGET_MS", 400),
-		ReserveMS:         envInt("A_GATEWAY_RESERVE_MS", 100),
-		MaxBodyBytes:      envInt("A_GATEWAY_MAX_BODY_BYTES", 1024*1024),
-		MaxParseRows:      envInt("A_GATEWAY_MAX_PARSE_ROWS", 15000),
-		ConnectPool:       envInt("A_GATEWAY_POOL_SIZE", 32),
-		CacheEntries:      envInt("A_GATEWAY_CACHE_ENTRIES", 512),
-		CacheBytes:        envInt("A_GATEWAY_CACHE_BYTES", 32*1024*1024),
-		CacheTTLSeconds:   envInt("A_GATEWAY_CACHE_TTL_S", 900),
-		WarmBudgetMS:      envInt("A_GATEWAY_WARM_BUDGET_MS", 30000),
-		Prewarm:           envBool("A_GATEWAY_PREWARM", true),
-		Contact:           envStr("A_GATEWAY_CONTACT", ""),
-		Offline:           envBool("A_GATEWAY_OFFLINE", false),
-		DataDir:           envStr("A_GATEWAY_DATA_DIR", ""),
-		ParserMode:        strings.ToLower(envStr("A_GATEWAY_PARSER", ParserAuto)),
-		ParserPython:      envStr("A_GATEWAY_PARSER_PYTHON", "python3"),
+		Host:             envStr("A_GATEWAY_HOST", "127.0.0.1"),
+		Port:             envInt("A_GATEWAY_PORT", 8848),
+		Workers:          envInt("A_GATEWAY_WORKERS", 1),
+		BudgetMS:         envInt("A_GATEWAY_BUDGET_MS", 500),
+		UpstreamBudgetMS: envInt("A_GATEWAY_UPSTREAM_BUDGET_MS", 400),
+		ReserveMS:        envInt("A_GATEWAY_RESERVE_MS", 100),
+		MaxBodyBytes:     envInt("A_GATEWAY_MAX_BODY_BYTES", 1024*1024),
+		MaxParseRows:     envInt("A_GATEWAY_MAX_PARSE_ROWS", 15000),
+		ConnectPool:      envInt("A_GATEWAY_POOL_SIZE", 32),
+		CacheEntries:     envInt("A_GATEWAY_CACHE_ENTRIES", 512),
+		CacheBytes:       envInt("A_GATEWAY_CACHE_BYTES", 32*1024*1024),
+		CacheTTLSeconds:  envInt("A_GATEWAY_CACHE_TTL_S", 900),
+		WarmBudgetMS:     envInt("A_GATEWAY_WARM_BUDGET_MS", 30000),
+		Prewarm:          envBool("A_GATEWAY_PREWARM", true),
+		Contact:          envStr("A_GATEWAY_CONTACT", ""),
+		Offline:          envBool("A_GATEWAY_OFFLINE", false),
+		DataDir:          envStr("A_GATEWAY_DATA_DIR", ""),
+		ParserMode:       strings.ToLower(envStr("A_GATEWAY_PARSER", ParserAuto)),
+		ParserPython:     envStr("A_GATEWAY_PARSER_PYTHON", "python3"),
 	}
 	c.VerifyTLS = strings.ToLower(envStr("A_GATEWAY_VERIFY", "true")) != "none"
 
@@ -113,7 +113,7 @@ func Load() *Config {
 // Headers returns the default request headers sent to every upstream.
 func (c *Config) Headers() map[string]string {
 	return map[string]string{
-		"User-Agent":     c.UserAgent,
+		"User-Agent":      c.UserAgent,
 		"Accept-Encoding": "identity",
 	}
 }
