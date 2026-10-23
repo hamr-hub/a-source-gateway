@@ -1,6 +1,7 @@
 name: Link Check
 
-# 每周检查 data/source_inventory.csv 里「官方入口」列的 URL 是否还能解析。
+# 每周检查两份清单(source_inventory.csv + source_inventory_cn.csv)里
+# 「官方入口」列的 URL 是否还能解析。
 #
 # 只读主分支:发现失效只开 issue,绝不自动改源清单 ——
 # 上游抖动很常见,自动改会把清单改脏(项目已明确决定)。
@@ -36,12 +37,16 @@ jobs:
           import json
 
           rows = []
-          with open('data/source_inventory.csv', encoding='utf-8', newline='') as fh:
-              for row in csv.DictReader(fh):
-                  url = (row.get('官方入口') or '').strip()
-                  name = (row.get('数据源') or '').strip()
-                  if url:
-                      rows.append({'name': name, 'url': url})
+          seen = set()  # 去重: 同一 URL 不重复探测
+          for path, label in (('data/source_inventory.csv', '海外'),
+                              ('data/source_inventory_cn.csv', '国内')):
+              with open(path, encoding='utf-8', newline='') as fh:
+                  for row in csv.DictReader(fh):
+                      url = (row.get('官方入口') or '').strip()
+                      name = (row.get('数据源') or '').strip()
+                      if url and url not in seen:
+                          seen.add(url)
+                          rows.append({'name': f'[{label}] {name}', 'url': url})
           with open('.linkcheck/urls.json', 'w', encoding='utf-8') as fh:
               json.dump(rows, fh, ensure_ascii=False, indent=2)
           with open('.linkcheck/urls.tsv', 'w', encoding='utf-8') as fh:

@@ -16,7 +16,7 @@ SOURCE ?=
 .PHONY: help install dev test network-test lint type fmt validate bench bench-gateway run build clean \
         gateway-build gateway-test gateway-run \
         docker-build docker-run up down \
-        recon verify-source demo parity check
+        recon verify-source verify-all demo parity check
 
 help:  ## 显示所有可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -106,6 +106,9 @@ recon:  ## 侦察一个站点
 
 verify-source:  ## 证据关卡(真实请求 + 断言)
 	$(PY) scripts/verify_source.py $(or $(SOURCE),$(filter-out $@,$(MAKECMDGOALS)))
+
+verify-all:  ## 复验注册表里所有源(真实请求, 输出汇总 JSON 到 verify-report.json)
+	$(PY) scripts/verify_source.py --all --json --timeout 15 > verify-report.json
 
 demo:  ## 调用示例 + 真实数据
 	$(PY) scripts/demo.py $(or $(SOURCE),$(filter-out $@,$(MAKECMDGOALS)))
