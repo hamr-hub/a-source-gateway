@@ -63,6 +63,29 @@ func TestStaleErrorsAreNotCountedAsErrors(t *testing.T) {
 	}
 }
 
+func TestLatencyHistogramBuckets(t *testing.T) {
+	m := New()
+	// 4 次调用: 80ms, 450ms, 600ms, 1500ms
+	for _, ms := range []int{80, 450, 600, 1500} {
+		m.Observe(Observation{Source: "s", LatencyMS: ms})
+	}
+	out := m.Render()
+	// 累计桶: <=100 有 1, <=500 有 2, <=750 有 3, <=2000 有 4
+	for _, line := range []string{
+		`asg_query_latency_ms_bucket{le="100"} 1`,
+		`asg_query_latency_ms_bucket{le="500"} 2`,
+		`asg_query_latency_ms_bucket{le="750"} 3`,
+		`asg_query_latency_ms_bucket{le="2000"} 4`,
+		`asg_query_latency_ms_bucket{le="+Inf"} 4`,
+		`asg_query_latency_ms_sum 2630`,
+		`asg_query_latency_ms_count 4`,
+	} {
+		if !strings.Contains(out, line) {
+			t.Errorf("histogram line %q is missing:\n%s", line, out)
+		}
+	}
+}
+
 func TestPerSourceLinesAreSorted(t *testing.T) {
 	m := New()
 	m.Observe(Observation{Source: "zeta", LatencyMS: 1})

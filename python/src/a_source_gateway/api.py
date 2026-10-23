@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from .cache import BoundedCache
 from .config import load_config
 from .registry import build_registry
-from .resolver import Resolver
+from .resolver import LATENCY_BUCKETS_MS, Resolver
 from .schema import DEFAULT_BUDGET_MS, QueryRequest
 
 CFG = load_config()
@@ -162,7 +162,16 @@ async def metrics() -> str:
         "# HELP asg_cache_hit_ratio 缓存命中率",
         "# TYPE asg_cache_hit_ratio gauge",
         f"asg_cache_hit_ratio {m['cache_hits_total'] / q:.4f}",
+        "# HELP asg_query_latency_ms 查询总耗时(网关总墙钟)",
+        "# TYPE asg_query_latency_ms histogram",
     ]
+    buckets = m.get("latency_buckets_ms", {})
+    for bound in LATENCY_BUCKETS_MS:
+        le = "+Inf" if bound is None else str(bound)
+        lines.append(f'asg_query_latency_ms_bucket{{le="{le}"}} {buckets.get(bound, 0)}')
+    lines.append(f'asg_query_latency_ms_bucket{{le="+Inf"}} {m["queries_total"]}')
+    lines.append(f'asg_query_latency_ms_sum {m["latency_sum_ms"]:.0f}')
+    lines.append(f'asg_query_latency_ms_count {m["queries_total"]}')
     for src, v in sorted(m.get("by_source", {}).items()):
         lines.append(f'asg_source_queries{{source="{src}"}} {v["queries"]}')
         lines.append(f'asg_source_degraded{{source="{src}"}} {v["degraded"]}')

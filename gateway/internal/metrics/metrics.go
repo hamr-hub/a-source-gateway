@@ -21,6 +21,10 @@ type SourceStat struct {
 	LatencySum float64
 }
 
+// latencyBuckets 是延迟直方图的桶边界(ms),与 Python resolver.LATENCY_BUCKETS_MS
+// 严格一致。500ms 是项目硬契约, 桶在该刻度两侧更密。
+var latencyBuckets = []float64{10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 2000, 5000}
+
 // Metrics is the process wide counter set.
 type Metrics struct {
 	mu sync.Mutex
@@ -34,6 +38,7 @@ type Metrics struct {
 	warmErrors  int64
 	latencySum  float64
 	latencyMax  float64
+	buckets     []int64 // 累计桶, 与 latencyBuckets 同长; +Inf = queries
 	warmLastErr string
 
 	bySource map[string]*SourceStat
@@ -41,7 +46,8 @@ type Metrics struct {
 
 // New returns an empty metric set.
 func New() *Metrics {
-	return &Metrics{bySource: map[string]*SourceStat{}}
+	return &Metrics{buckets: make([]int64, len(latencyBuckets)),
+		bySource: map[string]*SourceStat{}}
 }
 
 // Observation is one counted request.
@@ -77,6 +83,12 @@ func (m *Metrics) Observe(o Observation) {
 	m.latencySum += float64(o.LatencyMS)
 	if float64(o.LatencyMS) > m.latencyMax {
 		m.latencyMax = float64(o.LatencyMS)
+	}
+	lat := float64(o.LatencyMS)
+	for i, bound := range latencyBuckets {
+		if lat <= bound {
+			m.buckets[i]++
+		}
 	}
 	st := m.bySource[o.Source]
 	if st == nil {
@@ -171,7 +183,18 @@ func (m *Metrics) Render() string {
 		"# HELP asg_cache_hit_ratio 缓存命中率",
 		"# TYPE asg_cache_hit_ratio gauge",
 		fmt.Sprintf("asg_cache_hit_ratio %.4f", float64(m.cacheHits)/float64(q)),
+		"# HELP asg_query_latency_ms 查询总耗时(网关总墙钟)",
+		"# TYPE asg_query_latency_ms histogram",
 	}
+	for i, bound := range latencyBuckets {
+		lines = append(lines, fmt.Sprintf(
+			"asg_query_latency_ms_bucket{le=\"%g\"} %d", bound, m.buckets[i]))
+	}
+	lines = append(lines,
+		fmt.Sprintf("asg_query_latency_ms_bucket{le=\"+Inf\"} %d", m.queries),
+		fmt.Sprintf("asg_query_latency_ms_sum %.0f", m.latencySum),
+		fmt.Sprintf("asg_query_latency_ms_count %d", m.queries),
+	)
 	for _, l := range lines {
 		b.WriteString(l)
 		b.WriteByte('\n')

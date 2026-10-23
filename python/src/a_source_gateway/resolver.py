@@ -39,6 +39,10 @@ MAX_BODY_BYTES = 2 * 1024 * 1024       # 正文上限(运行期由 Config 覆盖
 MAX_PARSE_ROWS = 15000                  # CSV/TSV 最多解析这么多行
 DEFAULT_PAGE_SIZE = 25                  # 上游页大小默认值
 
+# 延迟直方图桶边界(ms), 与 gateway/internal/metrics 的 latencyBuckets 严格一致。
+# 500ms 是项目硬契约, 桶在该刻度两侧更密; Prometheus 的 +Inf 桶由输出端补。
+LATENCY_BUCKETS_MS = (10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 2000, 5000)
+
 # 上游页大小统一值: 这样"调用方要 3 条"与"要 50 条"命中同一条缓存。
 # 按端点可覆盖: 字段特别肥的源(如 OpenAlex 单条约 25KB)要调小, 否则正文会超上限被截断。
 PAGE_SIZE_PARAMS = {"size", "rows", "per_page", "per-page", "page_size", "pageSize"}
@@ -66,11 +70,14 @@ class Resolver:
         self._page_override: dict[str, int] = {}   # 端点 -> 更小的页大小(正文截断时自适应)
         self._too_large: set = set()              # 已知是"文件型大响应"的端点
         # 观测指标(供 /metrics 暴露)
+        # latency_buckets_ms: 延迟直方图(累计桶), 桶边界与 Go 网关严格一致。
+        # 500ms 是项目硬契约, 所以桶在 500 附近更密; +Inf 隐含。
         self.metrics: dict[str, Any] = {
             "queries_total": 0, "cache_hits_total": 0, "degraded_total": 0,
             "timeouts_total": 0, "errors_total": 0, "warm_fills_total": 0,
             "warm_errors_total": 0, "warm_last_error": "",
             "latency_sum_ms": 0.0, "latency_max_ms": 0.0,
+            "latency_buckets_ms": dict.fromkeys(LATENCY_BUCKETS_MS, 0),
             "by_source": {},
         }
 
@@ -403,6 +410,9 @@ class Resolver:
                 m["errors_total"] += 1
         m["latency_sum_ms"] += meta.latency_ms
         m["latency_max_ms"] = max(m["latency_max_ms"], meta.latency_ms)
+        for bound in LATENCY_BUCKETS_MS:
+            if meta.latency_ms <= bound:
+                m["latency_buckets_ms"][bound] += 1
         src = m["by_source"].setdefault(meta.source, {"queries": 0, "degraded": 0, "latency_sum": 0})
         src["queries"] += 1
         src["latency_sum"] += meta.latency_ms

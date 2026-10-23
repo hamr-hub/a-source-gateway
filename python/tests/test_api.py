@@ -50,6 +50,29 @@ def test_openapi_document_exposes_the_same_paths_as_the_go_gateway(client):
         assert want in paths, f"OpenAPI 文档缺路径 {want}"
 
 
+def test_metrics_exposition_has_latency_histogram(client):
+    """500ms 是硬契约: /metrics 必须暴露延迟直方图, 桶边界与 Go 网关一致。"""
+    from a_source_gateway.api import _r
+    from a_source_gateway.schema import ResponseMeta
+
+    # 直接记三笔观测, 不依赖网络: 80ms / 450ms / 600ms
+    for ms in (80, 450, 600):
+        _r()._observe(ResponseMeta(source="crossref", latency_ms=ms))
+    text = client.get("/metrics").text
+    assert "# TYPE asg_query_latency_ms histogram" in text
+    buckets = {}
+    for line in text.splitlines():
+        if line.startswith("asg_query_latency_ms_bucket"):
+            le = line.split('le="')[1].split('"')[0]
+            buckets[le] = int(line.rsplit(" ", 1)[1])
+    # 累计桶语义: <=100 有 1, <=500 有 2, +Inf 有 3
+    assert buckets["100"] == 1
+    assert buckets["500"] == 2
+    assert buckets["+Inf"] == 3
+    assert "asg_query_latency_ms_count 3" in text
+    assert "asg_query_latency_ms_sum 1130" in text
+
+
 def test_list_sources(client):
     d = client.get("/v1/sources?limit=5").json()
     assert d["meta"]["count"] >= 90
