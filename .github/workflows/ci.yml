@@ -100,7 +100,7 @@ jobs:
           # 所以关掉它,自己缓存 Go 编译缓存(下面)。
           cache: false
       - name: 缓存 Go 编译缓存
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/go-build
