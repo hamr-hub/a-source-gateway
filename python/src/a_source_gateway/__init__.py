@@ -22,7 +22,7 @@ from .schema import (
     SourceSpec,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __all__ = [
     "Config", "load_config", "build_registry", "Resolver",
     "QueryRequest", "ResponseEnvelope", "ResponseMeta", "SourceSpec",
