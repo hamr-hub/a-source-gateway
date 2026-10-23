@@ -59,6 +59,9 @@ def test_metrics_exposition_has_latency_histogram(client):
     for ms in (80, 450, 600):
         _r()._observe(ResponseMeta(source="crossref", latency_ms=ms))
     text = client.get("/metrics").text
+    assert client.get("/metrics").headers["content-type"].startswith("text/plain")
+    # 防回归: FastAPI 对裸 str 会做 JSON 编码, 指标文本不能带转义换行
+    assert "\\n" not in text
     assert "# TYPE asg_query_latency_ms histogram" in text
     buckets = {}
     for line in text.splitlines():

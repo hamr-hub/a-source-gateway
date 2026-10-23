@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .cache import BoundedCache
@@ -126,8 +126,12 @@ async def healthz() -> dict[str, Any]:
 
 
 @app.get("/metrics")
-async def metrics() -> str:
-    """Prometheus 文本格式的观测指标(零依赖实现, 无需 prometheus_client)。"""
+async def metrics() -> PlainTextResponse:
+    """Prometheus 文本格式的观测指标(零依赖实现, 无需 prometheus_client)。
+
+    必须返回 text/plain: FastAPI 对裸 str 返回值会做 JSON 编码
+    (指标文本变成一个被引号包住、换行被转义的 JSON 字符串),
+    Prometheus 无法解析。"""
     r = _r()
     m = r.metrics
     q = max(1, m["queries_total"])
@@ -177,7 +181,7 @@ async def metrics() -> str:
         lines.append(f'asg_source_degraded{{source="{src}"}} {v["degraded"]}')
         lines.append(f'asg_source_latency_avg_ms{{source="{src}"}} '
                      f'{v["latency_sum"] / max(1, v["queries"]):.2f}')
-    return "\n".join(lines) + "\n"
+    return PlainTextResponse("\n".join(lines) + "\n")
 
 
 @app.get("/livez")
