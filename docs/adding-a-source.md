@@ -260,7 +260,7 @@ make validate          # 等价于 python3 -m a_source_gateway.cli validate
 ## 8. 第五步:用真实数据验证(不可跳过)
 
 ```bash
-python3 scripts/verify_source.py "My Journal API"
+python3 scripts/verify_source.py "My Journal API" --direct-only
 ```
 
 这是**证据关卡**。它真的去请求上游,然后断言:
@@ -275,8 +275,21 @@ python3 scripts/verify_source.py "My Journal API"
 | 码 | 含义 | 你该做什么 |
 |---|---|---|
 | `0` | 已用真实数据验证通过 | 进下一步 |
-| `1` | 断言失败,或调用降级 | 修元数据声明,或看 `meta.errors` |
+| `1` | 断言失败,或调用降级 | **先看是哪条断言**:`not_degraded` 失败 = 网络慢(网关 400ms 预算),元数据可能完全正确;`item_path`/`total_field` 断言失败 = 元数据写错了,去改 |
 | `2` | **连不上上游** | 这是环境问题,不是源的问题 —— 换个网络环境再试,并如实说明 |
+
+> **为什么带 `--direct-only`?** 网关的上游预算只有 400ms,而从中国到欧美上游的实测往返
+> 常有 0.4–7.5s。走网关时调用会**正常降级**,`not_degraded` 断言随之失败 ——
+> **那是网络慢,不是元数据写错了**。`--direct-only` 让脚本直连上游(自带超时),
+> 才能真正验证"我声明的字段对不对"。
+>
+> 但直连不覆盖网关这一段,所以**两条都跑**:
+> ```bash
+> python3 scripts/verify_source.py "My Journal API" --direct-only   # 元数据对不对
+> python3 scripts/verify_source.py "My Journal API"                  # 走网关能不能通
+> ```
+> 第二条在网络慢时返回 `DEGRADED` + 退出码 1,这是**预期行为**:
+> 它证明的是"网关在预算内优雅降级并给出直连兜底"。
 
 ---
 

@@ -2,7 +2,7 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [1.1.0] - 2026-10-23
 
 ### 新增
 - **Go 网关面**(`gateway/`):路由、注册表、缓存(SWR + 自适应 TTL)、按站限速、
@@ -39,6 +39,24 @@
 - `A_GATEWAY_PARSER`(`auto`/`python`/`go`)、`A_GATEWAY_PARSER_PYTHON`、
   `A_GATEWAY_URL`、`A_GATEWAY_TIMEOUT_S`。
 
+### 新增(发布前打磨)
+- **`GET /openapi.json`**:Go 网关此前只能用 `gateway openapi -o` 离线导出,
+  FastAPI 参照实现却自带该路径。现在两平面在同一路径提供 OpenAPI 3.1 文档,
+  paths 集合实测完全一致(11 条路径),文档从路由表生成不会漂移。
+- **`asg_query_latency_ms` 直方图**:此前只有 avg/max 两个 gauge,
+  无法回答"多少比例的调用超过 500ms 契约"。现在按
+  `[10…500…5000]ms` 桶输出标准 `_bucket/_sum/_count`,Go/Python 桶边界严格一致,
+  500ms 两侧更密。
+- `verify_source.py --all --json` 全量复验模式:逐源子进程隔离,
+  汇总 verified/failed/unreachable,退出码=未通过源数(上限 100),
+  单源 90s 超时按 unreachable 计;`make verify-all` 一键跑。
+
+### 变更(发布前打磨)
+- 每周链接检查(`link-check.yml`)从只扫海外清单扩展为海外 + 国内两份清单。
+- `verify-sources.yml` 删除 80 行 shell 逐源退路,直接调用新落地的 `--all`。
+- GitHub Actions 全部升级到当前大版本(checkout v7、setup-go v7、
+  setup-python v6、cache v6、download-artifact v8)。
+
 ### 评审修复(独立 code review 后修的)
 
 - **B1 · 500ms 契约在 Go 网关上不成立(阻塞级)**:
@@ -68,31 +86,6 @@
 - 文档与实现漂移更正:正文上限 1MB(文档写 2MB)、后台补数预算 30s(文档写 15s)。
 
 ### 修复
-- 包安装路径错误:`packages = ["src/a_source_gateway"]` 指向不存在的目录,
-  `pip install -e .` 装不出可导入的 `a_source_gateway`。
-- 别名键 `HM Land Registry Price Paid` 与清单里的 `HMLR Price Paid Data` 对不上,
-  导致 `hmlr` / `landregistry` / `ppd` 别名从未生效。
-- 端点参数类型 `boolean` 不在 schema 契约内(应为 `bool`)。
-
----
-
-## [1.0.1] - 2026-10-23
-
-开源发布修复与观测性补强(首个公开版本之后的第一轮打磨)。
-
-### 新增
-- **`GET /openapi.json`**:Go 网关此前只能用 `gateway openapi -o` 离线导出,
-  FastAPI 参照实现却自带该路径。现在两平面在同一路径提供 OpenAPI 3.1 文档,
-  paths 集合实测完全一致(11 条路径),文档从路由表生成不会漂移。
-- **`asg_query_latency_ms` 直方图**:此前只有 avg/max 两个 gauge,
-  无法回答"多少比例的调用超过 500ms 契约"。现在按
-  `[10…500…5000]ms` 桶输出标准 `_bucket/_sum/_count`,Go/Python 桶边界严格一致,
-  500ms 两侧更密。
-- `verify_source.py --all --json` 全量复验模式:逐源子进程隔离,
-  汇总 verified/failed/unreachable,退出码=未通过源数(上限 100),
-  单源 90s 超时按 unreachable 计;`make verify-all` 一键跑。
-
-### 修复
 - **Python `/metrics` 返回的不是 Prometheus 文本(真实 bug)**:FastAPI 对裸
   `str` 返回值会做 JSON 编码,实际响应是一个被引号包住、换行全被转义的
   JSON 字符串(`content-type: application/json`),Prometheus 无法解析。
@@ -104,14 +97,33 @@
 - **CI 容器镜像任务在 PR 上必挂**:PR 事件的 `GITHUB_REF_NAME` 形如 `2/merge`,
   直接拼镜像 tag 是非法引用。改为 main 推 `:latest`、`v*` tag 推同名 tag、
   PR 只构建不打 tag 不推送。
-
-### 变更
-- 每周链接检查(`link-check.yml`)从只扫海外清单扩展为海外 + 国内两份清单。
-- `verify-sources.yml` 删除 80 行 shell 逐源退路,直接调用新落地的 `--all`。
-- GitHub Actions 全部升级到当前大版本(checkout v7、setup-go v7、
-  setup-python v6、cache v6、download-artifact v8)。
+- 包安装路径错误:`packages = ["src/a_source_gateway"]` 指向不存在的目录,
+  `pip install -e .` 装不出可导入的 `a_source_gateway`。
+- 别名键 `HM Land Registry Price Paid` 与清单里的 `HMLR Price Paid Data` 对不上,
+  导致 `hmlr` / `landregistry` / `ppd` 别名从未生效。
+- 端点参数类型 `boolean` 不在 schema 契约内(应为 `bool`)。
+- **全量复验后修正 10 个源的登记漂移**(逐个打真实上游实测出来的,不是推测):
+  `congress_gov_govinfo` 端点补 `api_key`(上游 v3 全部要 key,实测 403 API_KEY_MISSING);
+  `who_gho_ghed_ictrp` 端点补 `&$count=true`(OData 在 `$top` 时默认不回 `@odata.count`);
+  `usgs` 的 `format=rss` 已被上游下线(实测 400),改 XML + 必填 `stateCd`,并新增
+  `earthquakes` GeoJSON 端点; `imf_ifs_bis_oecd_sdmx` 的 `format=sdmx-json` 不是合法值
+  (实测 406),改 `json-structure-2.0.0`,`datamapper` 改用 `item_shape=map`;
+  `pubmed_e_utilities` 的 `esearchresult.count` 上游返回字符串,去掉抽不出总数的
+  `total_field` 声明; `unpaywall` 的 `email` 占位示例被上游拒收(实测 422);
+  `courtlistener_recap` / `world_bank` 的认证方式改回真实值(实测 401);
+  `patentsview` / `registers_of_scotland_ppd` 的官方入口域名已死,改到现役地址。
+  详见 [`docs/verification-2026-10-23.md`](docs/verification-2026-10-23.md)。
 
 ---
+
+## [1.0.1] - 2026-10-23
+
+> 已被 [1.1.0](#110---2026-10-23) 取代:该 tag 与本仓库当前的 tag 指向同一份代码
+> (包含双平面架构), 版本号按语义化版本应为次版本号, 故以 1.1.0 为准。
+> 保留此节以记录发布过程。
+
+---
+
 
 ## [1.0.0] - 2026-10
 

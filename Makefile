@@ -61,8 +61,13 @@ clean:  ## 清理构建产物与缓存
 	find . -name '*.egg-info' -type d -not -path './.venv/*' -prune -exec rm -rf {} +
 
 # ── Go 网关 ───────────────────────────────────────────────────────────
+# 版本号只有一个事实源: pyproject.toml。Go 二进制用 -ldflags 注入, 不会和 Python 包打架。
+VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+GOMOD    = github.com/hamr-hub/a-source-gateway/gateway
+LDFLAGS  = -s -w -X $(GOMOD)/internal/config.Version=$(VERSION)
+
 gateway-build:  ## 编译 Go 网关到 bin/a-source-gateway
-	cd gateway && go build -o ../bin/a-source-gateway ./cmd/gateway
+	cd gateway && go build -ldflags "$(LDFLAGS)" -o ../bin/a-source-gateway ./cmd/gateway
 
 gateway-test:  ## 跑 Go 网关的单元测试
 	cd gateway && go test ./...

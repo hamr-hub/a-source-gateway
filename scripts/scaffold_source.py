@@ -322,18 +322,25 @@ def build_row(recon: dict[str, Any], args, columns: list[str]) -> tuple[dict[str
     if "优先级" in columns:
         # 国内清单专有列(海外清单没有这列, 不会有这段)
         row["优先级"] = getattr(args, "priority", "") or "P2"
-    todos.append("实测增量: 目前是占位文本, 必须换成真实增量口径(不能与实测规模相同)")
-    todos.append("代理需求: 默认'兜底'(仓库里绝大多数源的口径), 按合规判断确认")
-    todos.append("别名: 别名表在 data/aliases.json(本任务只读不改), 需要另一次改动加简称")
-    if "UA" in (recon.get("auth", {}).get("evidence") or "") or "mailto" in str(
-            recon.get("query_params", {})):
-        todos.append("若上游要求 UA 带联系邮箱, 需在 认证方式/官方限速口径 旁注明(参考 SEC 的写法)")
 
+    # --override 先落盘, 再算 TODO —— 否则报告会把"已经填好的列"仍然列为待办,
+    # 让使用者以为自己的输入没生效。
+    overridden: set[str] = set()
     for key, val in (args.override or {}).items():
         if key not in row:
             todos.append(f"--override: 未知列名 {key!r}, 已忽略")
             continue
         row[key] = val
+        overridden.add(key)
+
+    if "实测增量" not in overridden:
+        todos.append("实测增量: 目前是占位文本, 必须换成真实增量口径(不能与实测规模相同)")
+    if "代理需求" not in overridden:
+        todos.append("代理需求: 默认'兜底'(仓库里绝大多数源的口径), 按合规判断确认")
+    todos.append("别名: 别名表在 data/aliases.json(本任务只读不改), 需要另一次改动加简称")
+    if "UA" in (recon.get("auth", {}).get("evidence") or "") or "mailto" in str(
+            recon.get("query_params", {})):
+        todos.append("若上游要求 UA 带联系邮箱, 需在 认证方式/官方限速口径 旁注明(参考 SEC 的写法)")
     return {c: row.get(c, "") for c in columns}, todos
 
 

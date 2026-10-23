@@ -32,6 +32,10 @@ jobs:
         with:
           go-version: '1.22'
           cache: false
+      - name: 读取版本号 (唯一事实源 pyproject.toml)
+        run: |
+          echo "VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)" >> "$GITHUB_ENV"
+          echo "GOMOD=github.com/hamr-hub/a-source-gateway/gateway" >> "$GITHUB_ENV"
       - name: 交叉编译 + 打包
         working-directory: gateway
         run: |
@@ -43,7 +47,8 @@ jobs:
             bin="dist/a-source-gateway-${os}-${arch}"
             echo "构建 ${os}/${arch}"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags "-s -w" -o "$bin" ./cmd/gateway
+              go build -trimpath -ldflags "-s -w -X ${GOMOD}/internal/config.Version=${VERSION}" \
+              -o "$bin" ./cmd/gateway
           done
       - name: 打包(二进制 + 事实源 + 许可)
         run: |

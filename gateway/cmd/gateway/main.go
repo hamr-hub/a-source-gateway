@@ -48,7 +48,7 @@ func main() {
 	case "openapi":
 		err = openapiDump(args, logger)
 	case "version":
-		fmt.Println("a-source-gateway (go) 1.0")
+		fmt.Println("a-source-gateway (go) " + config.Version)
 	case "help", "-h", "--help":
 		usage()
 	default:

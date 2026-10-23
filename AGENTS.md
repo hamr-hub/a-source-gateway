@@ -41,7 +41,7 @@
 - ✅ 接受:法规强制公开的数据、官方免费 API、官方批量下载文件。
 - ❌ 拒绝:需要登录/付费才能读的数据、明确禁止自动化抓取的站点、需要绕过任何限制才能拿到的数据。
 - ❌ 拒绝:内置代理池或 IP 轮换来绕过官方限速。**限速是授权条件,不是技术障碍。**
-  项目立场详见 [`NOTICE`](NOTICE) 与 [`docs/architecture.md`](docs/architecture.md) §7。
+  项目立场详见 [`NOTICE`](NOTICE) 与 [`docs/architecture.md`](docs/architecture.md) §8。
 
 遇到"技术上能爬但条款不允许"的站点,**停下来并向用户说明**,不要自行接入。
 
@@ -209,12 +209,19 @@ python3 scripts/scaffold_source.py --recon /tmp/recon.json --name "..." --apply
 
 ### 步骤 4 —— 加别名(让 LLM/简称也能找到它)
 
-编辑 `data/aliases.json`,加一行:
+编辑 `data/aliases.json`,在 `aliases` 对象里加一项:
 
 ```json
-"My Journal API": ["mja", "myjournal"]
+{
+  "version": "1.0",
+  "aliases": {
+    "My Journal API": ["mja", "myjournal"]
+  }
+}
 ```
 
+⚠️ **必须嵌在 `aliases` 对象里**。两个加载器(Go 与 Python)只读 `aliases` 这个键;
+写成顶层键会被**静默忽略** —— `validate` 照样通过,但别名永远不生效。
 键必须**精确等于** CSV 里 `数据源` 那一列的值。
 
 ### 步骤 5 —— 校验
@@ -233,7 +240,7 @@ URL 里用了 `{size}` 就必须声明 `size` 参数;另外还查**国别归属*
 ### 步骤 6 —— 用真实数据验证(这一步不能跳过)
 
 ```bash
-python3 scripts/verify_source.py "My Journal API"
+python3 scripts/verify_source.py "My Journal API" --direct-only
 ```
 
 这是**证据关卡**。它会真的去请求上游,然后断言:
@@ -247,6 +254,24 @@ python3 scripts/verify_source.py "My Journal API"
 (这是环境问题,不是源的问题 —— 如实报告,不要伪造)。
 
 同时它会打印一段**真实的**响应样本和一条可复制的 `curl` 命令。
+
+> **为什么默认加 `--direct-only`?** 走网关时,网关的上游预算只有 400ms,
+> 而从中国到欧美上游的实测往返常常是 0.4–7.5s —— 于是调用会**正常地降级**,
+> `not_degraded` 断言随之失败、退出码变成 `1`。**那不是元数据写错了,是网络慢。**
+> `--direct-only` 让验证脚本直连上游(带自己的超时),不受网关 400ms 预算影响,
+> 才能真正回答"我声明的字段对不对"。
+>
+> 代价:直连验证**不覆盖网关这一段**。所以两条都要跑:
+> ```bash
+> python3 scripts/verify_source.py "My Journal API" --direct-only   # 元数据对不对
+> python3 scripts/verify_source.py "My Journal API"                  # 走网关能不能通
+> ```
+> 第二条在网络慢时返回 `DEGRADED` + 退出码 1,这是**预期行为**,不是源有问题;
+> 它证明的是"网关在预算内优雅降级并给出直连兜底"。
+>
+> 如果退出码是 `1`,**先看断言名**:
+> - `not_degraded` 失败 → 网络/预算问题,元数据可能完全正确,别去改元数据;
+> - `item_path_resolves_to_list` / `total_field_resolves_to_number` 失败 → 元数据写错了,去改。
 
 ### 步骤 7 —— 更新部署
 
@@ -287,7 +312,7 @@ make check              # ruff + mypy + pytest + 数据校验 + Go 构建/测试
 a-source-gateway/
 ├── gateway/                    Go 网关(主运行时)。cmd/gateway + internal/{config,registry,
 │                               cache,parser,upstream,ratelimit,envelope,metrics,server}
-├── src/a_source_gateway/       Python 解析面 + 贡献者工作流
+├── python/src/a_source_gateway/  Python 解析面 + 贡献者工作流
 │   ├── parser_worker.py        解析服务(NDJSON over stdio),由 Go 网关拉起
 │   ├── resolver.py             参照实现:URL 渲染 / 缓存键 / SWR / 降级 / 解析投影
 │   ├── registry.py             注册表构建规则(slugify / classify_auth / parse_total)
@@ -305,7 +330,7 @@ a-source-gateway/
 │   ├── scaffold_source.py      生成草稿(CSV 行 + endpoints 条目)
 │   ├── verify_source.py        证据关卡:真实请求 + 断言
 │   └── demo.py                 产出调用示例与真实数据
-├── tests/                      pytest(默认不联网)
+├── python/tests/                 pytest(默认不联网)
 ├── docs/                       方案文档 / 技术选型(ADR)/ 优化报告 / meta 规范 / 性能
 ├── deploy/                     k8s / systemd / 部署 runbook
 ├── Dockerfile, docker-compose.yml, Makefile
@@ -392,7 +417,9 @@ curl -s -X POST http://127.0.0.1:8848/v1/query -H 'Content-Type: application/jso
 
 - [ ] `make validate` 通过
 - [ ] `make check` 通过(ruff / mypy / pytest / Go 构建与测试 / parity)
-- [ ] `python3 scripts/verify_source.py <源名>` 退出码为 `0`,且输出里有**真实响应样本**
+- [ ] `python3 scripts/verify_source.py <源名> --direct-only` 退出码为 `0`,且输出里有**真实响应样本**
+- [ ] `python3 scripts/verify_source.py <源名>`(走网关)要么退出码 `0`,要么是 `DEGRADED`
+      (网络慢时的预期结果 —— 关键是它必须给出 `fallback.upstream_url`)
 - [ ] `data/aliases.json` 已加别名(除非该源名称本身就是唯一标识)
 - [ ] `python3 scripts/demo.py <源名>` 的输出已附在 PR 描述里(**调用示例 + 真实数据**)
 - [ ] PR 描述写清了:官方入口、限速口径、规模与增量的取法、合规风险判断依据

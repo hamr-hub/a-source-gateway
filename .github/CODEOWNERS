@@ -19,7 +19,6 @@
 # ── 元数据事实源(改动需要真实请求证据) ──────────────────────────
 /data/                  @hamr-hub
 /docs/adding-a-source.md @hamr-hub
-/docs/agent-playbook.md  @hamr-hub
 
 # ── 接入工具链(改动会影响"智能体加源"这条主路径) ────────────────
 /scripts/               @hamr-hub
@@ -28,7 +27,7 @@
 
 # ── 网关与解析面 ────────────────────────────────────────────────
 /gateway/               @hamr-hub
-/src/                   @hamr-hub
+/python/src/           @hamr-hub
 
 # ── 部署与 CI ───────────────────────────────────────────────────
 /Dockerfile             @hamr-hub
