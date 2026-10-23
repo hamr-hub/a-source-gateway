@@ -65,3 +65,7 @@ registry*.json
 
 # Go 网关编译产物
 bin/
+
+# make verify-all 产物
+verify-report.json
+verify-stderr.log

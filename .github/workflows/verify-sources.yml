@@ -33,64 +33,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      # 依赖:scripts/verify_source.py 由 scripts 车道维护。
-      # 这里写的是全量复验命令 `python3 scripts/verify_source.py --json`。
-      # 该脚本当前(退出码 2 = argparse 用法错误)仍要求一个位置参数,
-      # 全量模式还没落地 —— 所以下面带了退路:命令没产出报告时
-      # 退化成逐源复验。等 scripts 车道补齐全量模式后,退路自动不再触发。
+      # 全量复验: scripts/verify_source.py --all --json
+      # 退出码 = 未通过源数(上限 100);unreachable 不计入失败,
+      # 因为上游临时不可达是环境问题,不是清单质量问题。
       - name: 复验所有源
         id: verify
         run: |
           set +e
-          python3 scripts/verify_source.py --json > verify-report.json 2> verify-stderr.log
+          python3 scripts/verify_source.py --all --json --timeout 15 > verify-report.json 2> verify-stderr.log
           code=$?
           set -e
-
-          if [ "$code" != "0" ] && ! python3 -c "import json,sys; json.load(open('verify-report.json'))" 2>/dev/null; then
-            echo "::notice::scripts/verify_source.py 的全量模式尚未落地(退出码 $code),退化为逐源复验"
-            mkdir -p .verify/reports
-            python3 -m a_source_gateway.cli build-registry --out .verify/registry.json
-            python3 -c "import json;print('\n'.join(s['id'] for s in json.load(open('.verify/registry.json'))['sources']))" > .verify/ids.txt
-            failures=0
-            while IFS= read -r sid; do
-              [ -n "$sid" ] || continue
-              # --json 输出的是缩进过的多行 JSON,所以每个源单独存一个文件
-              if python3 scripts/verify_source.py "$sid" --json > ".verify/reports/$sid.json" 2>> verify-stderr.log; then
-                :
-              else
-                rc=$?
-                failures=$((failures + 1))
-                echo "::warning::源 $sid 复验未通过(退出码 $rc)"
-              fi
-            done < .verify/ids.txt
-            python3 - <<'PY'
-          import glob
-          import json
-          import os
-
-          rows = []
-          for path in sorted(glob.glob('.verify/reports/*.json')):
-              sid = os.path.basename(path)[:-5]
-              try:
-                  with open(path, encoding='utf-8') as fh:
-                      row = json.load(fh)
-              except Exception as exc:
-                  row = {'source': sid, 'status': 'failed', 'errors': [f'报告无法解析: {exc}']}
-              rows.append(row)
-          bad = [r for r in rows if r.get('status') != 'verified']
-          out = {
-              'mode': 'per-source-fallback',
-              'total': len(rows),
-              'failed': len(bad),
-              'results': rows,
-          }
-          with open('verify-report.json', 'w', encoding='utf-8') as fh:
-              json.dump(out, fh, ensure_ascii=False, indent=2)
-          print(f"复验完成:{len(rows)} 个源,{len(bad)} 个未通过")
-          PY
-            code=$failures
-          fi
-
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" = "0" ]; then
             echo "failed=false" >> "$GITHUB_OUTPUT"
@@ -99,8 +51,8 @@ jobs:
           fi
           echo "--- stderr(尾部) ---"
           tail -40 verify-stderr.log || true
-          echo "--- 报告 ---"
-          head -60 verify-report.json || true
+          echo "--- 报告摘要 ---"
+          python3 -c "import json; d=json.load(open('verify-report.json')); print({k: d.get(k) for k in ('mode','total','verified','failed','unreachable')})"
 
       - name: 上传 JSON 报告
         if: always()
