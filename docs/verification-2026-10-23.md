@@ -460,6 +460,20 @@ example 本来就是"这个端点怎么调"的答案。两者都没有时仍然�
 (congress / eia_api / regulations_gov / college_scorecard)——
 用注册 key 或额度重置后即恢复,不是登记错误。
 
+### 8.7 剩下的 403/307 站点有没有机器接口?
+
+逐个找过,结论是**没有能直接用的**(别再重复找了):
+
+| 源 | 实测 | 有没有可用的官方机器接口 |
+|---|---|---|
+| ECHR HUDOC / CURIA | 官方入口 `403`(Cloudflare) | HUDOC 的 `app/query/results` 是 JSON 接口,但**任何查询都回 `resultcount: 0`**(试过 `AND`/`*`/`documentcollectionid2` 三种写法); CURIA 的 SPARQL 另说 |
+| EU 金融制裁综合名单 (FSF) | `307` 指向**自己**,正文写 "requires a valid session" | 是会话制的网页应用,没有稳定的导出地址 |
+| METI/DFAT/SEMA/SESAM、IDB/ADB、FFIEC、GS1、IBAN/BIC、BRIS、Espacenet | 官方入口 `403` | 都是人看的页面;本项目**不伪造浏览器 UA** 去绕(规则 1) |
+| NASA ADS | 官方入口 `405` | ADS API 本身要 token(清单已登记 `需token`) |
+
+有"人工页面但同时有官方机器接口"的,只有 `SEC Form D` 一个 —— 已经改成走
+EDGAR 全文检索 API(见第八节)。
+
 **这一轮真正拿到的**:`SEC Form D` 从"永远 403 的页面"变成可查的源
 (`total=4060`);`FDIC` / `ONS` / `ASIC` / `USPTO 批量` 从"跨主机跳转必然失败"
 变成能取到数;`WHO GHO` 的总数从错的变成对的;`GLEIF` 里那个永远 404 的端点被删掉。
