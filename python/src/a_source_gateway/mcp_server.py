@@ -1,12 +1,13 @@
 """
 mcp_server.py - A 类数据源网关的 MCP 服务(stdio)
 
-暴露 5 个工具, 与 HTTP API 一一对应:
+暴露 6 个工具, 与 HTTP API 一一对应:
     list_sources       列源(可按族/关键词过滤)
     get_source_meta    取单个源的完整 meta
     describe_endpoint  取端点的请求/响应结构
     query_source       执行查询, 返回信封
     get_meta_schema    取 meta 规范本身
+    search_sources     关键词多源检索(一次请求扇出到多个源)
 
 两平面架构: **Go 做网关(传输与调度), Python 做解析(内容与结构)**。
 因此本服务默认把工具调用**转发给 Go 网关的 HTTP API**(A_GATEWAY_URL, 默认
@@ -48,6 +49,12 @@ from .config import load_config
 from .registry import build_registry
 from .resolver import Resolver
 from .schema import DEFAULT_BUDGET_MS, SCHEMA_VERSION, QueryRequest
+from .search import (
+    DEFAULT_LIMIT,
+    DEFAULT_MAX_SOURCES,
+    compact_search,
+)
+from .search import search as run_search_fanout
 
 CFG = load_config()
 OFFLINE = CFG.offline
@@ -64,7 +71,8 @@ _INSTRUCTIONS = (
     "海外 A 类(法规强制公开)数据源网关。工具返回统一信封: "
     "{meta:{描述本次请求与上游状态}, data:[结果], fields:[字段]}。"
     "不存储业务数据;元数据本地索引,数据按需实时取,单次调用硬预算 ≤500ms。"
-    "先用 list_sources / get_source_meta 定位源与端点, 再用 query_source 取数。"
+    "先用 list_sources / get_source_meta 定位源与端点, 再用 query_source 取数; "
+    "要一次看多个源就用 search_sources(关键词扇出, 单源失败不影响整体)。"
 )
 
 if MCP_V2:
@@ -167,6 +175,13 @@ async def _call_gateway(name: str, args: dict[str, Any]) -> Any:
             "timeout_ms": int(args.get("timeout_ms", DEFAULT_BUDGET_MS)),
         }
         return await asyncio.to_thread(_http_json, "POST", "/v1/query", body)
+    if name == "search_sources":
+        body = {
+            "q": args.get("q", "") or "",
+            "limit": int(args.get("limit", DEFAULT_LIMIT)),
+            "max_sources": int(args.get("max_sources", DEFAULT_MAX_SOURCES)),
+        }
+        return await asyncio.to_thread(_http_json, "POST", "/v1/search", body)
     if name == "get_meta_schema":
         return await asyncio.to_thread(_http_json, "GET", "/v1/schema")
     raise GatewayError(404, f"未知工具 {name}")
@@ -204,12 +219,24 @@ async def _call_python(name: str, args: dict[str, Any]) -> Any:
         )
         env = await r.query(req)
         return env.to_dict()
+    if name == "search_sources":
+        # 本地回落: 走与 HTTP 路由**同一份**扇出逻辑(search.py),
+        # 两个平面的语义不允许各写一份。
+        payload = {
+            "q": args.get("q", "") or "",
+            "limit": int(args.get("limit", DEFAULT_LIMIT)),
+            "max_sources": int(args.get("max_sources", DEFAULT_MAX_SOURCES)),
+        }
+        doc, detail = await run_search_fanout(r, payload)
+        if detail:
+            return {"meta": {"error": "参数不合法", "detail": detail}, "data": None}
+        return doc or {"meta": {}, "queries": [], "results": []}
     if name == "get_meta_schema":
         return SCHEMA_DOC
     return {"meta": {"error": f"未知工具 {name}"}, "data": None}
 
 
-# 5 个工具的显式定义(单一事实源): 名字/标题/描述/入参 schema
+# 6 个工具的显式定义(单一事实源): 名字/标题/描述/入参 schema
 _TOOL_SPECS: list[dict[str, Any]] = [
         {
             "name": "list_sources",
@@ -273,6 +300,25 @@ _TOOL_SPECS: list[dict[str, Any]] = [
             "description": "返回网关自身的 meta 规范(源/端点/请求/响应信封的字段定义)。",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "search_sources",
+            "title": "关键词多源检索",
+            "description": "用关键词一次检索多个数据源: 按与 list_sources 相同的索引选出源, "
+                           "每个源并发调用其第一个端点, 单源失败不影响整体"
+                           "(失败写在该源的 errors 里)。返回 {meta, queries, results} 的紧凑版。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string",
+                          "description": "关键词, 搜源 id/别名/名称/机构/国别/端点 id"},
+                    "limit": {"type": "integer", "default": DEFAULT_LIMIT,
+                              "minimum": 1, "maximum": 100},
+                    "max_sources": {"type": "integer", "default": DEFAULT_MAX_SOURCES,
+                                    "minimum": 1, "maximum": 50},
+                },
+                "required": ["q"],
+            },
+        },
     ]
 
 
@@ -287,7 +333,7 @@ def _make_tool(spec: dict[str, Any]) -> Any:
 
 
 def _tool_defs() -> list[Any]:
-    """5 个工具的显式定义(mcp 1.x 直接用它; 2.x 用同一份 title/description)。"""
+    """6 个工具的显式定义(mcp 1.x 直接用它; 2.x 用同一份 title/description)。"""
     return [_make_tool(spec) for spec in _TOOL_SPECS]
 
 
@@ -305,6 +351,10 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         payload = {"meta": {"error": f"网关返回 {e.status}", "detail": e.body}, "data": None}
         mode = GATEWAY_MODE
 
+    if name == "search_sources" and isinstance(payload, dict) and "results" in payload:
+        # 紧凑版: 一次扇出十几个源, 全文塞回给模型既费 token 又淹掉重点。
+        # 网关路径与本地回落路径都过这一道, 保证两边返回的形状一样。
+        payload = compact_search(payload, int(args.get("limit", DEFAULT_LIMIT) or DEFAULT_LIMIT))
     if isinstance(payload, dict) and isinstance(payload.get("meta"), dict):
         payload["meta"]["gateway"] = mode      # 回落路径可观测, 不静默降级
     _log(f"tool={name} gateway={mode}")
@@ -367,6 +417,12 @@ async def _t_get_meta_schema() -> dict[str, Any]:
     return await _dispatch("get_meta_schema", {})
 
 
+async def _t_search_sources(q: str, limit: int = DEFAULT_LIMIT,
+                            max_sources: int = DEFAULT_MAX_SOURCES) -> dict[str, Any]:
+    return await _dispatch("search_sources",
+                            {"q": q, "limit": limit, "max_sources": max_sources})
+
+
 if MCP_V2:
     # mcp 2.x: 入参 schema 由函数签名推导, 名字/标题/描述沿用同一份定义
     for _fn, _spec in (
@@ -375,6 +431,7 @@ if MCP_V2:
         (_t_describe_endpoint, _tool_defs()[2]),
         (_t_query_source, _tool_defs()[3]),
         (_t_get_meta_schema, _tool_defs()[4]),
+        (_t_search_sources, _tool_defs()[5]),
     ):
         server.tool(name=_spec.name, title=_spec.title, description=_spec.description,
                     structured_output=False)(_fn)

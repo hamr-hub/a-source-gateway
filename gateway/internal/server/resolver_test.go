@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -1053,5 +1054,32 @@ func TestEmptyUpstreamResultIsNotCachedForLong(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no empty entry in the cache, want a short lived one")
+	}
+}
+
+// TestUpstreamErrorTypeVocabulary pins the shared error type vocabulary.
+//
+// 调用方是按 errors[].type 分支的, 所以同一个失败类别在两个平面必须给同一个
+// 名字: Python 参照面在 resolver.py 的 _transport_error_type 里用同一套词表。
+// 词表外的名字会漏掉调用方的分支。
+func TestUpstreamErrorTypeVocabulary(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want string
+	}{
+		{`Get "https://x.example/y": dial tcp: lookup x.example: no such host`, "connect_error"},
+		{`Get "https://x.example/y": dial tcp 1.2.3.4:443: connect: connection refused`, "connect_error"},
+		{`Get "https://x.example/y": tls: failed to verify certificate: x509: unknown authority`, "connect_error"},
+		{`Get "https://x.example/y": read tcp 1.2.3.4:443: connection reset by peer`, "read_error"},
+		{`Get "https://x.example/y": EOF`, "read_error"},
+		{`Get "https://x.example/y": unexpected EOF`, "read_error"},
+		{`Get "https://x.example/y": server closed idle connection`, "read_error"},
+		{`Get "https://x.example/y": some other transport failure`, "upstream_error"},
+	}
+	for _, c := range cases {
+		got := upstreamErrorType(errors.New(c.msg))
+		if got != c.want {
+			t.Errorf("upstreamErrorType(%q) = %q, want %q", c.msg, got, c.want)
+		}
 	}
 }

@@ -50,6 +50,26 @@ _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 NOT_JSON_PREVIEW_CHARS = 240
 
 
+def _transport_error_type(exc: BaseException) -> str:
+    """把传输层异常映射到两个平面共用的错误类型名。
+
+    调用方是按 ``errors[].type`` 分支的("这是连不上, 还是连上了但中途断了"),
+    所以同一个失败类别在两个平面必须给同一个名字。词表与 Go 侧
+    ``upstreamErrorType`` 逐条对齐:
+
+    * ``connect_error`` —— 域名解析失败 / 连接被拒 / 证书问题(根本没连上)
+    * ``read_error`` —— 连上了但中途断了(连接重置 / 服务端提前关闭 / EOF)
+    * ``upstream_error`` —— 其余传输层失败
+
+    原始异常文本仍放在 message 里 —— 各运行时的措辞不同, 那是事实, 不强行统一。
+    """
+    if isinstance(exc, httpx.ConnectError):
+        return "connect_error"
+    if isinstance(exc, httpx.ReadError | httpx.RemoteProtocolError):
+        return "read_error"
+    return "upstream_error"
+
+
 def body_preview(body: str, limit: int = NOT_JSON_PREVIEW_CHARS) -> str:
     """正文前若干字符: 换行/制表符压成空格、限长。
 
@@ -466,7 +486,7 @@ class Resolver:
             meta.total = total
         except Exception as e:
             meta.degraded = True
-            meta.errors.append({"type": type(e).__name__, "message": str(e)[:300]})
+            meta.errors.append({"type": _transport_error_type(e), "message": str(e)[:300]})
             meta.fallback = {"upstream_url": url, "method": ep["method"],
                              "hint": "网关取数失败;可直连上游"}
             self._schedule_warm(ep_ctx, url, cache_key)
@@ -663,6 +683,12 @@ class Resolver:
 
         规则与 _render 一致: 环境变量 > 有 default 的取 default > 必填且只有
         example 的取 example; email/mailto 端点在值为空时回落到已配置的联系邮箱。
+
+        与 Go 侧 prewarmParams 逐条对齐(见 gateway/internal/server/resolver.go):
+        凭据参数(p["env"])在环境变量没配时**不回落 example**, 但端点声明的
+        default 照取 —— default 说的是"这个参数没配时该用什么", 与凭据无关。
+        早先这里对"必填 + 有 env"的参数直接 continue, 连 default 也一起丢了,
+        于是同一个端点在两个平面渲染出的 URL 不一样(搜索的关键词扇出会用到它)。
         """
         params: dict[str, Any] = {}
         for p in ep.get("params", []):
@@ -672,9 +698,8 @@ class Resolver:
                 if env_value:
                     params[name] = env_value
                     continue
-                # 凭据缺失: 不回落到 example(理由见 _render 里的同一条规则)。
-                if p.get("required"):
-                    continue
+                # 凭据缺失: 不回落到 example(理由见 _render 里的同一条规则);
+                # 但 default 仍然照取 —— 与 Go 侧 prewarmParams 同一条规则。
             if p.get("default") is not None:
                 params[name] = p["default"]
             elif (p.get("required") and p.get("example") is not None

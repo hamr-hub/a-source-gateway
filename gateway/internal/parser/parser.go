@@ -41,28 +41,31 @@ const (
 // An upstream that answers with an HTML error page (a gateway error, a
 // captcha, a maintenance page) is not an empty result: the caller has to
 // be able to tell the two apart. The error is detectable with errors.Is.
-var ErrNotJSON = errors.New("上游响应不是 JSON")
+//
+// The wording is the same on both planes (Go engine, Python worker) and in
+// the Python reference: the envelope of a call must not depend on which
+// engine produced it.
+var ErrNotJSON = errors.New("上游返回的不是 JSON(疑似 HTML 错误页)")
 
 // NotJSONError is the concrete form of ErrNotJSON: it carries an excerpt of
 // the body, so that the reason is visible at a glance ("<!DOCTYPE html>…").
 type NotJSONError struct {
 	// Snippet is a single line excerpt of the upstream body.
 	Snippet string
-	// Cause is the underlying decoding error.
+	// Cause is the underlying decoding error. It is kept for the logs;
+	// it is not rendered into the message, because the raw decoder error
+	// ("invalid character '<' …") says less than the excerpt and differs
+	// between the engines.
 	Cause error
 }
 
 // Error implements error.
 //
-// The excerpt is not repeated when the cause already carries it (the
-// Python worker puts the excerpt into its message).
+// The message is one template on every plane:
+//
+//	上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: <片段>
 func (e *NotJSONError) Error() string {
-	msg := "上游响应不是 JSON"
-	if e.Cause != nil && e.Snippet != "" && !strings.Contains(e.Cause.Error(), e.Snippet) {
-		msg += ": " + e.Cause.Error()
-	} else if e.Cause != nil && e.Snippet == "" {
-		msg += ": " + e.Cause.Error()
-	}
+	msg := "上游返回的不是 JSON(疑似 HTML 错误页)"
 	if e.Snippet != "" {
 		msg += "; 正文片段: " + e.Snippet
 	}

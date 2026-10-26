@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MCP 集成 · a-source-gateway 文档</title>
-<meta name="description" content="a-source-gateway 的 MCP server:5 个工具、客户端接入配置、A_GATEWAY_URL 与两平面回落语义(meta.gateway)、排障。">
+<meta name="description" content="a-source-gateway 的 MCP server:6 个工具、客户端接入配置、A_GATEWAY_URL 与两平面回落语义(meta.gateway)、排障。">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/base.css">
 </head>
@@ -72,13 +72,13 @@
 
       <h1>MCP 集成</h1>
       <p class="lede">
-        MCP server 把网关的 5 个核心能力暴露成工具,让 AI 智能体用"先读元数据、再取数"的方式查 A 类数据源。
+        MCP server 把网关的 6 个核心能力暴露成工具,让 AI 智能体用"先读元数据、再取数"的方式查 A 类数据源。
         工具调用默认<strong>转发给 Go 网关</strong>,网关不可达时才回落进程内 Python resolver ——
         回落是<strong>可观测的</strong>,结果里的 <code>meta.gateway</code> 会写明走的是哪条平面。
       </p>
 
       <div class="stats">
-        <div class="stat"><div class="stat-num">5</div><div class="stat-label">MCP 工具</div></div>
+        <div class="stat"><div class="stat-num">6</div><div class="stat-label">MCP 工具</div></div>
         <div class="stat"><div class="stat-num">2</div><div class="stat-label">工作平面(Go / Python)</div></div>
         <div class="stat"><div class="stat-num">≤500<span style="font-size:1rem">ms</span></div><div class="stat-label">单次调用硬预算</div></div>
         <div class="stat"><div class="stat-num">stderr</div><div class="stat-label">日志通道</div></div>
@@ -108,7 +108,7 @@
         </a>
       </div>
 
-      <h2>五个工具</h2>
+      <h2>六个工具</h2>
       <div class="table-wrap">
         <table>
           <thead>
@@ -119,6 +119,7 @@
             <tr><td><code>get_source_meta</code></td><td>取单个源的完整 meta</td><td><code>source</code></td><td><span class="method get">GET</span> <code>/v1/sources/{source_id}</code></td></tr>
             <tr><td><code>describe_endpoint</code></td><td>取端点的请求/响应结构</td><td><code>source</code>、<code>endpoint</code></td><td><span class="method get">GET</span> <code>/v1/sources/{id}/endpoints/{eid}</code></td></tr>
             <tr><td><code>query_source</code></td><td>执行查询,返回信封</td><td><code>source</code>、<code>endpoint</code></td><td><span class="method post">POST</span> <code>/v1/query</code></td></tr>
+            <tr><td><code>search_sources</code></td><td>一次搜索多个源,返回紧凑版结果</td><td><code>q</code></td><td><span class="method post">POST</span> <code>/v1/search</code></td></tr>
             <tr><td><code>get_meta_schema</code></td><td>取网关自身的 meta 规范</td><td>无</td><td><span class="method get">GET</span> <code>/v1/schema</code></td></tr>
           </tbody>
         </table>
@@ -126,6 +127,7 @@
       <p style="margin-top:18px">
         推荐用法是 <code>list_sources</code> 定位源 → <code>get_source_meta</code> 看限速与合规 → <code>describe_endpoint</code> 看参数 →
         <code>query_source</code> 取数。服务给客户端的 instructions 里也是这么写的。
+        只想"一个关键词横向看几个源"时,直接用 <code>search_sources</code>。
       </p>
 
       <h3>list_sources —— 列出 A 类数据源</h3>
@@ -243,6 +245,81 @@
           </tbody>
         </table>
       </div>
+
+      <h3>search_sources —— 一次搜索多个源</h3>
+      <p>
+        给一个关键词,在多个源上并行查一遍,拿回<strong>紧凑版</strong>结果。
+        行为与 <code>POST /v1/search</code> 一致:同样优先转发给 Go 网关,网关不可达时回落本地 resolver。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>入参</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>q</code></td><td>string</td><td><span class="badge danger">必填</span></td><td>—</td><td>关键词;与 <code>GET /v1/sources?q=</code> 用同一套索引选源(源 id、别名、名称、机构、国别、分类、摘要、端点 id)</td></tr>
+            <tr><td><code>limit</code></td><td>integer</td><td>否</td><td><code>5</code></td><td>每个源最多返回多少条,取值 1–100</td></tr>
+            <tr><td><code>max_sources</code></td><td>integer</td><td>否</td><td><code>12</code></td><td>最多选多少个源,取值 1–50</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        返回是<strong>紧凑版</strong>（<code>{meta, queries, results}</code>）：每个源只留
+        <code>source</code> / <code>endpoint</code> / <code>count</code> / <code>total</code> /
+        <code>degraded</code> / <code>errors</code>，<code>data</code> 按 <code>limit</code> 截断 ——
+        一次扇出十几个源，全文塞回给模型既费 token 又淹掉重点。
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "meta": {
+    "requested": 2,
+    "ok": 1,
+    "degraded": 1,
+    "failed": 0,
+    "with_data": 1,
+    "budget_ms": 500,
+    "latency_ms": 42,
+    "schema_version": "1.2",
+    "gateway": "go"
+  },
+  "queries": ["crossref/works", "gleif_lei/lei_records"],
+  "results": [
+    {
+      "source": "crossref",
+      "endpoint": "works",
+      "count": 2,
+      "total": null,
+      "degraded": false,
+      "errors": [],
+      "data": [ { "…": "条目" } ]
+    },
+    {
+      "source": "gleif_lei",
+      "endpoint": "lei_records",
+      "count": 0,
+      "total": null,
+      "degraded": true,
+      "errors": [
+        { "type": "timeout", "message": "上游超过 400ms 预算, 已降级" }
+      ],
+      "data": []
+    }
+  ]
+}
+</code></pre>
+      </div>
+      <p class="inline-hint">
+        上面是<strong>结构示意</strong>：字段名与形状来自实现，条数与耗时随上游与网络变化。
+        紧凑版<strong>不带</strong>每条的 <code>fallback</code> / <code>cached</code> /
+        <code>latency_ms</code>，<code>meta</code> 里也不带 <code>trace_id</code>；
+        <code>meta.gateway</code> 与其他工具一样标明走的是哪条平面。
+      </p>
+      <p>
+        某个源失败不会让整次工具调用失败:失败信息落在那个源的 <code>errors</code> 里,
+        其余源照常返回。要看每个源的完整信封(含 <code>fallback</code> 直连兜底),用
+        <code>POST /v1/search</code>。
+      </p>
 
       <h3>get_meta_schema —— 取 meta 规范</h3>
       <p>返回网关自身的 meta 规范(源/端点/请求/响应信封的字段定义)。无入参。</p>

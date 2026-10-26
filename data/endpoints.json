@@ -1571,7 +1571,7 @@
       {
         "id": "consolidated_xml",
         "name": "综合名单 XML",
-        "url_template": "https://scsanctions.un.org/resources/xml/en/consolidated.xml",
+        "url_template": "https://unsolprodfiles.blob.core.windows.net/publiclegacyxmlfiles/EN/consolidated.xml",
         "response": {
           "shape": "xml",
           "media_type": "application/xml",
@@ -1594,7 +1594,8 @@
           ],
           "notes": "实测 2,489 行"
         },
-        "cache_ttl_s": 3600
+        "cache_ttl_s": 3600,
+        "notes": "官方入口 scsanctions.un.org 会 302 到带签名的 consolidatedLegacyByPRN.xml(签名 1 小时过期, 写不进端点模板; 条目数与 consolidated.xml 相同, 字节不同);该 blob 容器是公开的, 这里直接指向 consolidated.xml 的最终地址(实测 200 + XML, 2.54MB)"
       }
     ],
     "World Bank 禁入名单": [

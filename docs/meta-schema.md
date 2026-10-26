@@ -52,9 +52,11 @@
 | type | 含义 | 调用方该做什么 |
 |---|---|---|
 | `timeout` | 上游超过预算 | 看 `fallback.upstream_url` 直连;或稍后重试(后台在补数) |
-| `upstream_error` | 上游返回 4xx/5xx | 看 `errors[].message` 里的上游原文 |
+| `connect_error` | **连不上**:域名解析失败 / 连接被拒 / 证书问题 | 换网络/检查端点 URL;或直连上游 |
+| `read_error` | **连上了但中途断了**:连接重置 / 服务端提前关闭 / EOF | 稍后重试(后台在补数) |
+| `upstream_error` | 上游返回 4xx/5xx,**或**其余传输层失败 | 看 `errors[].message` 里的上游原文/异常文本 |
 | `upstream_not_json` | 上游返回的不是 JSON(常见于上游错误页/WAF 拦截页) | 看 `errors[].message` 里的正文片段;或直连 `fallback.upstream_url` 看真实情况 |
-| `parse_error` | 正文不是声明的形状(CSV/JSONL 等) | 同上,直连上游看原文 |
+| `parse_error` | 正文不是声明的形状(CSV/JSONL 等) | 同上,直连上游看原文(目前只有 Go 网关会产生这一条;Python 参照面解析不了正文时报 `upstream_not_json`) |
 | `response_too_large` | 响应超正文上限被截断 | 减小 `limit`,或直连上游 / 走批量下载 |
 | `stale` | 缓存已过期,返回陈旧值 | 视场景接受,或稍后重试 |
 | `offline` | 网关离线模式 | 只用元数据与已缓存数据 |
@@ -63,6 +65,87 @@
 | `not_found` | 未知源 / 未知端点 | 用 `list_sources` 重新定位 |
 | `missing_param` | 缺必填参数 | 看端点 meta 的 `params` |
 | `endpoint_not_found` | 该源没有这个端点 | 用 `describe_endpoint` 列端点 |
+
+> **传输层失败用三个共用名字**:`connect_error`(根本没连上)/ `read_error`(连上了但中途断了)/
+> `upstream_error`(其余传输层失败)。调用方是按 `errors[].type` 分支的,所以同一个失败类别
+> 在两个平面必须给同一个名字 —— Go 网关的 `upstreamErrorType()`
+> (`gateway/internal/server/resolver.go`)与 Python 参照面的 `_transport_error_type()`
+> (`python/src/a_source_gateway/resolver.py`)逐条对齐,`python/tests/test_error_taxonomy.py`
+> 守住这张词表不再外扩。
+> **原始异常文本照旧放在 `errors[].message` 里** —— 各运行时的措辞不同,那是事实,不强行统一。
+> `timeout` 仍是 `timeout`。
+
+### 1.3 搜索响应(`POST /v1/search`)
+
+`POST /v1/search` 是**唯一不返回单个信封**的路由:它一次扇出多个源,返回
+**信封数组 + 汇总 meta**。
+
+```jsonc
+{
+  "meta": { ... },                    // 见 §1.3.1 —— 整次扇出的汇总
+  "queries": ["crossref/works", "gleif_lei/lei_records"],
+  "results": [                        // 每项各自是一个源的信封
+    {
+      "source": "crossref",
+      "endpoint": "works",
+      "degraded": false,
+      "cached": false,
+      "latency_ms": 1,
+      "count": 2,
+      "total": null,
+      "data": [ ... ],                 // 这一条的结果
+      "fields": [ ... ],               // 这一条返回的字段名
+      "errors": []                     // 这一条的错误;无错时是 []
+      // "fallback": { ... }           // 降级且有直连指引时才出现
+    }
+  ]
+}
+```
+
+#### 1.3.1 汇总 `meta`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `requested` | int | 这次实际发起的查询条数,恒等于 `ok + degraded + failed`(三类互斥) |
+| `ok` | int | 既没降级、也没有 error 的条数 |
+| `degraded` | int | 降级条数(超时、上游报错、解析失败等) |
+| `failed` | int | 没降级但有 error 的条数 —— 未知源 / 未知端点这类硬失败 |
+| `with_data` | int | `count > 0` 的条数 |
+| `budget_ms` | int | 本次总预算(默认 500),**每个源各自一份** |
+| `latency_ms` | int | 整次扇出的墙钟耗时(约等于最慢的那一条) |
+| `trace_id` | string | 本次请求的链路 id |
+| `schema_version` | string | 信封结构版本,当前 `1.2` |
+
+#### 1.3.2 `results[]` 每一项
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `source` / `endpoint` | string | 这一条实际命中的规范源 id 与端点 id |
+| `degraded` | bool | 这一条是否降级 |
+| `cached` | bool | 这一条是否命中缓存 |
+| `latency_ms` | int | 这一条自己的耗时 |
+| `count` | int | 这一条返回的条数 |
+| `total` | int/null | 这一条的上游记录总数 |
+| `data` | array/object | 这一条的结果 |
+| `fields` | string[] | 这一条返回的字段名 |
+| `errors` | array | 这一条的错误列表,**始终存在**;无错时是 `[]`,每项形如 `{type, message}` |
+| `fallback` | object | 降级时的直连兜底;**只在降级且有直连指引时才出现** |
+
+`queries[i]` 与 `results[i]` **一一对应且顺序一致**,`queries[i]` 的格式是
+`"<source>/<endpoint>"`(例如 `"crossref/works"`)。
+
+#### 1.3.3 与 §1 三段式的对应关系
+
+| 三段式 | 搜索响应里的对应 |
+|---|---|
+| `meta` | 顶层 `meta`(汇总 `requested` / `ok` / `degraded` / `failed` / `with_data`) |
+| `data` | `results[i].data` |
+| `fields` | `results[i].fields` |
+
+**单个源失败不影响整次调用**:未知源 / 未知端点 / 上游超时都只写进那一条的 `errors`,
+整体仍返回 200。这与 `POST /v1/query` 遇未知源返回 404 **刻意不同** —— 搜索要的是
+"一次看多个源",一个源坏了不该让整次调用失败。各源**并发**执行、各自一份 ≤500ms 预算,
+整体墙钟约等于最慢的那一条。
 
 ---
 
@@ -276,6 +359,75 @@ curl -s "http://127.0.0.1:8848/v1/sources?q=szse"
 ```
 
 **保留参数 `_cb`**:只进缓存键、不发给上游,用于强制冷路径测试(基准用)。
+
+### 4.1 搜索请求(`POST /v1/search`)
+
+请求体有**两种形态**;`queries` 非空时**优先**用它,两个都给也以 `queries` 为准。
+
+**形态 A —— 显式扇出**:
+
+```jsonc
+{
+  "queries": [
+    {
+      "source": "crossref",                 // 必填;也接受简称
+      "endpoint": "works",                  // 缺省 "entry"(通用透传端点)
+      "params": { "filter": "from-index-date:2026-10-21" },  // 键顺序原样保留
+      "limit": 2,                           // 缺省取顶层 limit
+      "fields": [ "DOI" ]                   // 只回这些字段
+    }
+  ],
+  "limit": 5
+}
+```
+
+**形态 B —— 关键词扇出**:
+
+```jsonc
+{
+  "q": "制裁",          // 用与 GET /v1/sources?q= 相同的搜索索引选源
+  "limit": 5,           // 默认 5,取值 1..100
+  "max_sources": 12     // 默认 12,取值 1..50;只对 q 形态生效
+}
+```
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `queries` | array | 否 | — | 显式扇出的查询列表;非空时逐项各跑一次查询 |
+| `q` | string | 否 | — | 关键词扇出(仅在 `queries` 缺省或为空时生效) |
+| `limit` | int | 否 | `5` | 每条查询最多返回多少条,取值 1..100;**越界被钳到范围内**(不报错) |
+| `max_sources` | int | 否 | `12` | 关键词扇出时最多选多少个源,取值 1..50;越界同样被钳位 |
+
+`queries[]` 里每一项的字段:
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `source` | string | 是 | — | 源 id(也接受别名) |
+| `endpoint` | string | 否 | `entry` | 端点 id;缺省用通用透传端点 `entry` |
+| `params` | object | 否 | `{}` | 端点请求参数;**键顺序原样保留**(渲染出的 URL 与缓存键由它决定) |
+| `limit` | int | 否 | 顶层 `limit` | 这一条最多返回多少条 |
+| `fields` | string[] | 否 | `[]` | 只回这些字段 |
+
+> `q` 的选源规则与 §2.1 的关键词检索**同一套索引**:大小写不敏感地匹配源的规范 id、
+> 全部别名、名称、机构、国别、分类、摘要与该源全部端点 id。命中后每个源各跑它自己的
+> 第一个**非通用**端点(跳过自动派生的 `entry`)。
+
+**校验失败(422)**:响应体与 FastAPI 同形
+`{"detail":[{"type":…,"loc":[…],"msg":…,"input":…}]}`;嵌套字段的 `loc` 把整条路径放在
+**一个段**里(如 `["body","queries.0.source"]`)。主要几类:
+
+| type | 什么时候 | msg |
+|---|---|---|
+| `json_invalid` | 请求体不是合法 JSON | `Invalid JSON body` |
+| `model_attributes_type` | 请求体不是对象 | `Input should be a valid dictionary or object to extract fields from` |
+| `list_type` | `queries` 不是数组 / `fields` 不是数组 | `Input should be a valid list` |
+| `dict_type` | `queries[i]` 或 `params` 不是对象 | `Input should be a valid dictionary` |
+| `missing` | 缺 `source`;或 `queries` 为空且 `q` 也缺(`q` 是空串同样算缺,`loc` 指向 `q` 自己) | `Field required` / `Field required: provide "queries" or "q"` |
+| `string_type` | `source` / `endpoint` / `q` / `fields[i]` 不是字符串 | `Input should be a valid string` |
+| `int_type` | `limit` / `max_sources` / `queries[i].limit` 不是整数 | `Input should be a valid integer` |
+
+> 注意与 `POST /v1/query` 的差别:查询接口的 `limit` 越界报 422,搜索接口的 `limit` /
+> `max_sources` 是**钳位**(不报错)。
 
 ---
 

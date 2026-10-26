@@ -3,6 +3,12 @@ bench.py - 网关延迟基准
 
 验收标准: **p95 < 500ms**(整个请求从进网关到返回,含上游取数)
 
+结论分两个维度, 不能混成一句 PASS:
+  pass     —— 延迟契约成立(冷/热路径 p95、max 都不超 500ms)
+  data_ok  —— 数据正确性(热路径的每个用例都 count > 0, 见 docs/performance.md §2.2)
+数据正确性取决于上游限流与跨境网络, 不并进 pass; 但它是一个独立字段,
+"全部降级"时不会只剩一句 PASS 把信号盖掉。
+
 三类用例:
   meta   —— 纯本地元数据查询(list_sources / get_source_meta / describe_endpoint)
   query  —— 实时取数(打上游, 受 500ms 硬预算约束)
@@ -190,6 +196,18 @@ async def bench(base: str, rounds: int, out_path: Path, cold_rounds: int = 2,
                             "degraded": degraded, "cached": cached,
                             "count": max(counts), "total": totals[-1]})
 
+    summary = build_summary(results, cold, rounds)
+    out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
+
+
+def build_summary(results: list[dict[str, Any]], cold: list[dict[str, Any]],
+                  rounds: int) -> dict[str, Any]:
+    """把逐次采样汇成一份总结报告。
+
+    单独抽出来是为了能离线单测: 判据逻辑(延迟契约 / 数据正确性)是这个基准
+    唯一有价值的部分, 不该只能靠"起一个真服务跑一遍"来验证。
+    """
     meta_lat = [r["p95"] for r in results if r["kind"] == "meta"]
     q_lat = [r["p95"] for r in results if r["kind"] == "query"]
     worst = max(results, key=lambda r: r["p95"])
@@ -200,7 +218,20 @@ async def bench(base: str, rounds: int, out_path: Path, cold_rounds: int = 2,
                 if r["kind"] == "query" and r.get("cached", 0) >= r.get("n", 1)]
     cold_lat = sorted(c["ms"] for c in cold)
     cold_degraded = sum(1 for c in cold if c["degraded"])
-    summary = {
+
+    # ── 两条判据分开报 ─────────────────────────────────────────────────
+    # 延迟契约(doc §2.2 第一行): 冷热路径的 p95/max 都不超过 500ms。
+    latency_ok = (all(r["p95"] <= BUDGET_MS for r in results)
+                  and all(c["ms"] <= BUDGET_MS for c in cold))
+    # 数据正确性(doc §2.2 第二行): 热路径的每个用例都要 count > 0。
+    # 这一条**不并进 pass**: 能不能拿到数据取决于上游限流与跨境网络, 不是网关
+    # 可控的范围。但它必须是一个独立字段 —— 否则"10 个用例全部降级、count 全 0"
+    # 也会打印一句 "PASS", 把最该被看到的信号盖过去。
+    q_cases = [r for r in results if r["kind"] == "query"]
+    data_missing = [r["name"] for r in q_cases if (r.get("count") or 0) <= 0]
+    data_ok = not data_missing
+
+    return {
         "budget_ms": BUDGET_MS,
         "rounds": rounds,
         "meta_p95_max_ms": round(max(meta_lat), 1) if meta_lat else None,
@@ -218,12 +249,26 @@ async def bench(base: str, rounds: int, out_path: Path, cold_rounds: int = 2,
             "n": len(cold),
         },
         "over_budget_cases": [r["name"] for r in results if r["p95"] > BUDGET_MS],
-        "pass": (all(r["p95"] <= BUDGET_MS for r in results)
-                 and all(c["ms"] <= BUDGET_MS for c in cold)),
+        # pass 只表示延迟契约成立; 数据正确性看 data_ok。
+        "pass": latency_ok,
+        "latency_ok": latency_ok,
+        "data_ok": data_ok,
+        "data_with_count": len(q_cases) - len(data_missing),
+        "data_total": len(q_cases),
+        "data_missing": data_missing,
+        "verdict": _verdict(latency_ok, data_ok, data_missing, len(q_cases)),
         "cases": results,
     }
-    out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    return summary
+
+
+def _verdict(latency_ok: bool, data_ok: bool, missing: list[str], total: int) -> str:
+    """一句话结论: 延迟契约与数据正确性是两个维度, 不能混成一句 PASS。"""
+    if not latency_ok:
+        return "FAIL — 延迟契约不成立"
+    if not data_ok:
+        return (f"PASS(仅延迟契约) · 数据正确性未达标: "
+                f"{len(missing)}/{total} 个热路径用例没有数据")
+    return "PASS — 延迟契约与数据正确性都成立"
 
 
 def print_summary(summary: dict[str, Any]) -> None:
@@ -239,6 +284,9 @@ def print_summary(summary: dict[str, Any]) -> None:
     qc = [r for r in summary["cases"] if r["kind"] == "query"]
     with_data = sum(1 for r in qc if (r.get("count") or 0) > 0)
     print(f"热路径有数据用例: {with_data}/{len(qc)}")
+    missing = summary.get("data_missing") or []
+    if missing:
+        print(f"没有数据的用例: {', '.join(missing)}")
     cached_all = sum(1 for r in qc if r.get("cached", 0) >= r.get("n", 1))
     if cached_all:
         print(f"注意: {cached_all}/{len(qc)} 个 query 用例全程命中缓存, "
@@ -247,11 +295,12 @@ def print_summary(summary: dict[str, Any]) -> None:
     print(f"冷路径(每源首调): 最差 {cp['worst']['name']} {cp['worst']['ms']}ms | p95 "
           f"{summary['query_cold_p95_ms']}ms | 降级 {cp['degraded']}/{len(cp['cases'])}"
           f" ({cp['degraded_ratio']}) | 超预算 {cp['over_budget'] or '无'}")
+    warm = summary.get("query_warm_p95_max_ms")
     print(f"预算 {summary['budget_ms']}ms | meta p95 最差 {summary['meta_p95_max_ms']}ms | "
-          f"query 热路径 p95 最差 {summary['query_warm_p95_max_ms']}ms")
+          f"query 热路径 p95 最差 {warm if warm is not None else 'n/a(本轮无全缓存用例)'}ms")
     if summary["over_budget_cases"]:
         print(f"超预算用例: {summary['over_budget_cases']}")
-    print(f"结论: {'PASS — 冷/热路径全部 ≤ 500ms' if summary['pass'] else 'FAIL'}")
+    print(f"结论: {summary['verdict']}")
 
 
 def _wait_ready(base: str, timeout: float = 25.0) -> bool:

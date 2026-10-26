@@ -73,6 +73,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/sources/{source_id}/endpoints/{endpoint_id}", s.handleDescribeEndpoint)
 	s.mux.HandleFunc("GET /v1/query", s.handleQueryGET)
 	s.mux.HandleFunc("POST /v1/query", s.handleQueryPOST)
+	s.mux.HandleFunc("POST /v1/search", s.handleSearchPOST)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 
@@ -113,11 +114,12 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"GET  /v1/sources/{source_id}/endpoints/{endpoint_id}",
 		"POST /v1/query",
 		"GET  /v1/query?source=&endpoint=&params=<json>",
+		"POST /v1/search",
 	})
 	mcp := parser.NewObject()
 	mcp.Set("command", "python3 -m a_source_gateway.mcp_server")
 	mcp.Set("tools", []any{"list_sources", "get_source_meta", "describe_endpoint",
-		"query_source", "get_meta_schema"})
+		"query_source", "get_meta_schema", "search_sources"})
 	doc.Set("mcp", mcp)
 	writeJSON(w, http.StatusOK, doc)
 }
@@ -546,16 +548,27 @@ func writeDetail(w http.ResponseWriter, r *http.Request, status int, detail stri
 
 // writeValidationError renders a FastAPI style validation error.
 func writeValidationError(w http.ResponseWriter, loc string, field, typ, msg string, input any) {
-	item := parser.NewObject()
-	item.Set("type", typ)
-	locList := []any{}
+	full := []any{}
 	if loc != "" {
-		locList = append(locList, loc)
+		full = append(full, loc)
 	}
 	if field != "" {
-		locList = append(locList, field)
+		full = append(full, field)
 	}
-	item.Set("loc", locList)
+	writeValidationErrorAt(w, full, typ, msg, input)
+}
+
+// writeValidationErrorAt renders a FastAPI style validation error with an
+// explicit location path.
+//
+// The location path of a nested field ("body.queries.0.source") is kept as a
+// single segment instead of a list of segments: the Python reference plane
+// builds the same detail list by hand, and both planes must answer with the
+// same bytes.
+func writeValidationErrorAt(w http.ResponseWriter, loc []any, typ, msg string, input any) {
+	item := parser.NewObject()
+	item.Set("type", typ)
+	item.Set("loc", loc)
 	item.Set("msg", msg)
 	item.Set("input", input)
 	doc := parser.NewObject()

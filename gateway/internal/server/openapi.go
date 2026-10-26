@@ -109,6 +109,16 @@ func pathsObject() *parser.Object {
 		}))
 	paths.Set("/v1/query", query)
 
+	// /v1/search: 一次请求扇出多个数据源。请求体有两种形态(显式 queries
+	// 列表 / 关键词 q), 所以它**不能**复用 /v1/query 的那个 requestBody。
+	search := parser.NewObject()
+	search.Set("post", op("一次请求扇出多个数据源(每个源各自预算, 并发执行)", nil,
+		[]any{searchRequestBody()}, []any{
+			responseRef("200", "搜索结果: 汇总 meta + 逐源 results"),
+			responseRef("422", "请求体不合法"),
+		}))
+	paths.Set("/v1/search", search)
+
 	return paths
 }
 
@@ -209,4 +219,86 @@ func requestBody() *parser.Object {
 	content.Set("application/json", media)
 	body.Set("content", content)
 	return body
+}
+
+// searchRequestBody 描述 POST /v1/search 的请求体。
+//
+// 它有自己的一份, 不复用 /v1/query 的 requestBody(): /v1/query 的请求体带的是
+// 单个 source/endpoint, 搜索的请求体带的是"查询列表"或"选源的关键词"。
+// 把两种形状并进一个 schema, 生成的客户端就会拿到这个接口根本不接的字段。
+func searchRequestBody() *parser.Object {
+	body := parser.NewObject()
+	body.Set("required", true)
+	body.Set("description", "两种形态: 显式扇出(queries)或关键词扇出(q); 同时给定时 queries 优先。")
+
+	// queries 数组里的一个查询
+	entry := parser.NewObject()
+	entry.Set("type", "object")
+	entry.Set("required", []any{"source"})
+	entryProps := parser.NewObject()
+	entryProps.Set("source", schemaString("源 id(必填)"))
+	entryProps.Set("endpoint", schemaString("端点 id, 缺省 \"entry\"(通用入口)"))
+	entryProps.Set("params", schemaObject("上游查询参数; 键顺序原样保留, 决定渲染出的 URL 与缓存键"))
+	entryProps.Set("limit", schemaInt("这一条最多返回多少条; 缺省或 ≤0 时取顶层的 limit"))
+	entryProps.Set("fields", schemaStringArray("只要这些字段"))
+	entry.Set("properties", entryProps)
+
+	props := parser.NewObject()
+	props.Set("queries", schemaArrayOf(entry, "显式扇出的查询列表; 非空时逐项各跑一次查询"))
+	props.Set("q", schemaString("关键词扇出: 用与 GET /v1/sources?q= 相同的搜索索引选源"))
+	props.Set("limit", schemaInt("每条查询最多返回多少条, 默认 5, 取值范围 [1,100]"))
+	props.Set("max_sources", schemaInt("关键词扇出时最多选多少个源, 默认 12, 取值范围 [1,50]; 只对 q 形态生效"))
+
+	schema := parser.NewObject()
+	schema.Set("type", "object")
+	schema.Set("properties", props)
+
+	media := parser.NewObject()
+	media.Set("schema", schema)
+	content := parser.NewObject()
+	content.Set("application/json", media)
+	body.Set("content", content)
+	return body
+}
+
+// schemaString 造一个带说明的 string schema。
+func schemaString(description string) *parser.Object {
+	o := parser.NewObject()
+	o.Set("type", "string")
+	o.Set("description", description)
+	return o
+}
+
+// schemaInt 造一个带说明的 integer schema。
+func schemaInt(description string) *parser.Object {
+	o := parser.NewObject()
+	o.Set("type", "integer")
+	o.Set("description", description)
+	return o
+}
+
+// schemaObject 造一个带说明的 object schema。
+func schemaObject(description string) *parser.Object {
+	o := parser.NewObject()
+	o.Set("type", "object")
+	o.Set("description", description)
+	return o
+}
+
+// schemaStringArray 造一个带说明的字符串数组 schema。
+func schemaStringArray(description string) *parser.Object {
+	o := parser.NewObject()
+	o.Set("type", "array")
+	o.Set("description", description)
+	o.Set("items", parser.NewObjectWith("type", "string"))
+	return o
+}
+
+// schemaArrayOf 造一个数组 schema, 数组元素用给定的那个 schema。
+func schemaArrayOf(item *parser.Object, description string) *parser.Object {
+	o := parser.NewObject()
+	o.Set("type", "array")
+	o.Set("description", description)
+	o.Set("items", item)
+	return o
 }

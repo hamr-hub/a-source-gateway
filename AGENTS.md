@@ -423,7 +423,7 @@ curl -s "http://127.0.0.1:8848/v1/sources?q=szse"   # → id=szse, aliases=["szs
 |---|---|
 | `validate` 报错 | `docs/adding-a-source.md` §2–§4 的字段约束 |
 | 查询返回 `degraded` | 信封的 `meta.errors[]` 和 `meta.fallback.hint` —— 它们会直接告诉你原因和下一步 |
-| 返回空列表但 `degraded=false` | 先看 `meta.errors` 是不是空的;若是 `upstream_not_json`,说明上游给的是 HTML 错误页而不是数据(改上游可访问性,不是改 `item_path`) |
+| 返回空列表 | 先看 `meta.errors`:有 `upstream_not_json` 就是上游给了 HTML 错误页(改上游可访问性,不是改 `item_path`);`errors` 为空且 `degraded=false` 才是"确实没有数据" |
 | 按简称能调用、却搜不到源 | `GET /v1/sources?q=` 从 1.2 起匹配源 id / 别名 / 端点 id;搜到的结果里带 `aliases` |
 | 403 | 上游要求 UA 带邮箱 → 设 `A_GATEWAY_CONTACT` |
 | 超时 / `budget_exceeded` | 该端点 `budget_ms` 与上游实际延迟;必要时调小 `page_size` |

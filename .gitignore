@@ -49,6 +49,9 @@ data/*.local.csv
 bench-report.json
 *.bench.json
 
+# 其他工具(非本仓库)的本地产物
+.workbuddy/
+
 # 构建期从仓库根 data/ 同步生成, 不入库
 python/src/a_source_gateway/data/
 

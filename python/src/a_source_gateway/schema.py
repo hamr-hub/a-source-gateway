@@ -153,7 +153,7 @@ class EndpointSpec:
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "method": self.method,
@@ -166,6 +166,7 @@ class EndpointSpec:
             "budget_ms": self.budget_ms,
             "notes": self.notes,
         }
+        return d
 
 
 @dataclass

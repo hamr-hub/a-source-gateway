@@ -13,6 +13,7 @@ api.py - A 类数据源通用查询 API
     GET  /v1/sources/{sid}/endpoints/{eid}   端点 meta(请求/响应结构)
     POST /v1/query              执行查询 -> 信封
     GET  /v1/query              同上(查询参数形式, 便于浏览器/curl)
+    POST /v1/search             一次请求扇出到多个数据源
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -31,6 +32,14 @@ from .config import load_config
 from .registry import build_registry
 from .resolver import LATENCY_BUCKETS_MS, Resolver
 from .schema import DEFAULT_BUDGET_MS, SCHEMA_VERSION, QueryRequest
+from .search import (
+    DEFAULT_LIMIT,
+    DEFAULT_MAX_SOURCES,
+    GENERIC_ENDPOINT_ID,
+    json_invalid_detail,
+    run_search,
+    validate_search_body,
+)
 
 CFG = load_config()
 OFFLINE = CFG.offline
@@ -110,11 +119,12 @@ async def root() -> dict[str, Any]:
             "GET  /v1/sources/{source_id}/endpoints/{endpoint_id}",
             "POST /v1/query",
             "GET  /v1/query?source=&endpoint=&params=<json>",
+            "POST /v1/search",
         ],
         "mcp": {
             "command": "python3 -m a_source_gateway.mcp_server",
             "tools": ["list_sources", "get_source_meta", "describe_endpoint",
-                      "query_source", "get_meta_schema"],
+                      "query_source", "get_meta_schema", "search_sources"],
         },
     }
 
@@ -305,6 +315,95 @@ async def query_get(source: str = Query(...), endpoint: str = Query(...),
     t0 = time.perf_counter()
     env = await r.query(req)
     return _envelope_response(env, t0)
+
+
+# ── POST /v1/search: 一次请求扇出到多个数据源 ─────────────────────────────
+# 请求体的 schema 手工写进 openapi_extra: 这个路由刻意**不用** pydantic 模型
+# 校验(pydantic 生成的 loc 是分段数组, 与 Go 网关的 "body.queries.0.source"
+# 单段写法对不上), 所以文档也得自己声明。
+SEARCH_REQUEST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "queries": {
+            "type": "array",
+            "description": "显式扇出: 一次请求里的多条查询; 非空时优先于 q。",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "源 id, 见 GET /v1/sources"},
+                    "endpoint": {"type": "string",
+                                 "description": f"端点 id, 缺省 {GENERIC_ENDPOINT_ID}(通用透传)"},
+                    "params": {"type": "object",
+                               "description": "端点参数(键序原样保留, 影响缓存键)"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100,
+                              "description": "本次查询的条数上限"},
+                    "fields": {"type": "array", "items": {"type": "string"},
+                               "description": "只返回这些字段"},
+                },
+                "required": ["source"],
+            },
+        },
+        "q": {"type": "string",
+              "description": "关键词: 用与 GET /v1/sources?q= 相同的索引选源"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": DEFAULT_LIMIT,
+                  "description": "每个源的条数上限(越界夹到区间内, 不报错)"},
+        "max_sources": {"type": "integer", "minimum": 1, "maximum": 50,
+                        "default": DEFAULT_MAX_SOURCES,
+                        "description": "关键词形态最多扇出多少个源"},
+    },
+}
+
+
+def _trace_id(request: Request) -> str:
+    """请求的 trace id: 优先用调用方带来的, 否则生成一个。"""
+    for header in ("X-Gateway-Trace-Id", "X-Request-Id"):
+        v = (request.headers.get(header) or "").strip()
+        if v:
+            return v
+    return ""
+
+
+def _validation_response(detail: list[dict[str, Any]]) -> JSONResponse:
+    """FastAPI 形状的校验错误: {"detail": [{type, loc, msg, input}]}。"""
+    return JSONResponse({"detail": detail}, status_code=422)
+
+
+@app.post("/v1/search", openapi_extra={
+    "requestBody": {
+        "required": True,
+        "content": {"application/json": {"schema": SEARCH_REQUEST_SCHEMA}},
+    },
+    "responses": {
+        "200": {"description": "扇出结果: {meta, queries, results}"},
+        "422": {"description": "请求体校验失败(detail 形状与 FastAPI 一致)"},
+    },
+})
+async def search_post(request: Request) -> JSONResponse:
+    """一次请求扇出到多个数据源。
+
+    两种形态(``queries`` 优先):
+      - A) 显式扇出: ``{"queries": [{source, endpoint, params, limit, fields}], "limit": N}``
+      - B) 关键词扇出: ``{"q": "keyword", "limit": N, "max_sources": M}``
+
+    **单个源失败不影响整体**: 未知源 / 未知端点 / 上游超时都只写进该条结果的
+    errors[], 整体仍然返回 200 —— 这与 POST /v1/query(未知源 404)刻意不同,
+    搜索是"广度优先"的活, 一条源挂了不该拖垮其余的源。
+
+    所有源并发执行, 每个源各自 ≤500ms 预算, 整体墙钟 ≈ 最慢的那个源。
+    """
+    t0 = time.perf_counter()
+    raw = await request.body()
+    try:
+        body = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        # 不是合法 JSON(含空 body) —— 与 Go 网关一样报 json_invalid。
+        return _validation_response(json_invalid_detail())
+    detail = validate_search_body(body)
+    if detail:
+        return _validation_response(detail)
+    r = _r()
+    doc = await run_search(r, body, trace_id=_trace_id(request), started_at=t0)
+    return JSONResponse(doc, headers={"X-Gateway-Latency-Ms": str(doc["meta"]["latency_ms"])})
 
 
 SCHEMA_DOC: dict[str, Any] = {

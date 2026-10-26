@@ -776,6 +776,11 @@ func (r *Resolver) scheduleWarm(ep *registry.EndpointSpec, epKey, url, cacheKey 
 //
 // Sources whose endpoint does not exist (or whose name is unknown) are
 // reported per source with an error envelope; they never fail the request.
+//
+// 每个源跑在自己的 goroutine 里, 所以**必须**在 goroutine 内 recover:
+// 中间件的 RecoverMiddleware 只兜得住处理请求那个 goroutine 的 panic, 这里的
+// panic 会直接把整个网关进程带走 —— 一个源的数据形状有问题, 不该让其余的源
+// 一起陪葬。
 func (r *Resolver) Search(reqs []QueryRequest, budgetMS *int) []*envelope.Envelope {
 	out := make([]*envelope.Envelope, len(reqs))
 	var wg sync.WaitGroup
@@ -783,11 +788,36 @@ func (r *Resolver) Search(reqs []QueryRequest, budgetMS *int) []*envelope.Envelo
 		wg.Add(1)
 		go func(i int, req QueryRequest) {
 			defer wg.Done()
+			defer func() {
+				if rec := recover(); rec != nil {
+					out[i] = r.panicEnvelope(req, rec)
+				}
+			}()
 			out[i] = r.Query(req, budgetMS)
 		}(i, req)
 	}
 	wg.Wait()
 	return out
+}
+
+// panicEnvelope builds the envelope of a source whose query panicked.
+//
+// 它和普通降级信封的形状一样, 只是多一条 internal_error —— 调用方按信封读就行,
+// 不用为"某个源崩了"再写一套分支。
+func (r *Resolver) panicEnvelope(req QueryRequest, rec any) *envelope.Envelope {
+	meta := envelope.NewMeta()
+	meta.Source = req.Source
+	meta.Endpoint = req.Endpoint
+	meta.BudgetMS = r.cfg.BudgetMS
+	meta.Degraded = true
+	meta.Parser = r.ParserName()
+	meta.TraceID = req.TraceID
+	if meta.TraceID == "" {
+		meta.TraceID = envelope.NewTraceID()
+	}
+	meta.AddError("internal_error", fmt.Sprintf("该源的查询处理时崩溃: %v", rec))
+	meta.SetFallback(req.Source, "GET", "该源本次调用异常, 请直连上游或稍后重试")
+	return buildEnvelope(meta, []any{}, req.Fields)
 }
 
 // Prewarm issues one minimal query per source to warm the connection pool
@@ -1359,23 +1389,33 @@ func encodeQuery(key string, value any) []string {
 	}
 }
 
-// upstreamErrorType maps a transport error onto the error type names of the
-// Python reference (httpx exception class names).
+// upstreamErrorType maps a transport error onto the shared error type names.
+//
+// 两个平面必须给同一个失败类别同一个名字: 调用方是按 errors[].type 分支的
+// ("这是连不上, 还是连上了但中途断了"), 名字各写各的就等于让调用方写两套判断。
+// 词表(与 Python 参照面的 _transport_error_type 逐条对齐):
+//
+//	connect_error —— 域名解析失败 / 连接被拒 / 证书问题(根本没连上)
+//	read_error    —— 连上了但中途断了(连接重置 / 服务端提前关闭 / EOF)
+//	upstream_error —— 其余传输层失败
+//
+// 原始错误文本仍放在 message 里 —— 各运行时的措辞不同, 那是事实, 不强行统一。
 func upstreamErrorType(err error) string {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "no such host"):
-		return "ConnectError"
-	case strings.Contains(msg, "connection refused"):
-		return "ConnectError"
-	case strings.Contains(msg, "connection reset"):
-		return "ReadError"
-	case strings.Contains(msg, "certificate"):
-		return "ConnectError"
-	case strings.Contains(msg, "context canceled"):
-		return "ReadError"
+	case strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "certificate"),
+		strings.Contains(msg, "name resolution"):
+		return "connect_error"
+	case strings.Contains(msg, "connection reset"),
+		strings.Contains(msg, "EOF"),
+		strings.Contains(msg, "server closed"),
+		strings.Contains(msg, "broken pipe"),
+		strings.Contains(msg, "unexpected disconnect"):
+		return "read_error"
 	}
-	return "UpstreamError"
+	return "upstream_error"
 }
 
 func truncateRunes(s string, n int) string {

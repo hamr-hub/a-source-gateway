@@ -23,7 +23,7 @@ Go 网关把上游原始响应丢给本 worker, 本 worker 把它解析成规范
     {"id":"req-1","ok":false,"error":"boom","error_type":"ParseError"}
 
 上游正文不是 JSON 时(**只针对 json 形状**):
-    {"id":"req-1","ok":false,"error":"上游返回的不是 JSON(疑似 HTML 错误页): <正文前若干字符>",
+    {"id":"req-1","ok":false,"error":"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: <正文前若干字符>",
      "error_type":"NotJSON","body_preview":"<正文前若干字符>"}
 
 其他 op:
@@ -102,7 +102,7 @@ class NotJSONError(Exception):
     """
 
     def __init__(self, preview: str):
-        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页): {preview}")
+        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: {preview}")
         self.preview = preview
 
 

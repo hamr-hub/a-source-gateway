@@ -214,7 +214,7 @@ make up                # docker compose up -d --build
       </p>
 
       <h2>接口一览</h2>
-      <p>网关一共 13 条路由，其中<strong>取数据与列源</strong>这几条返回统一信封，其余是元数据与运维接口。完整参数与错误码见 <a href="api.html">API 参考</a>。</p>
+      <p>网关一共 14 条路由，其中<strong>取数据与列源</strong>这几条返回统一信封，其余是元数据与运维接口。完整参数与错误码见 <a href="api.html">API 参考</a>。</p>
 
       <div class="table-wrap">
         <table>
@@ -227,6 +227,7 @@ make up                # docker compose up -d --build
             <tr><td><span class="method get">GET</span></td><td><code>/v1/sources/{id}/endpoints/{eid}</code></td><td>端点的请求参数与响应结构</td></tr>
             <tr><td><span class="method post">POST</span></td><td><code>/v1/query</code></td><td>查数据，返回统一信封</td></tr>
             <tr><td><span class="method get">GET</span></td><td><code>/v1/query?source=&amp;endpoint=&amp;params=&lt;json&gt;</code></td><td>同 POST，便于浏览器直接打开</td></tr>
+            <tr><td><span class="method post">POST</span></td><td><code>/v1/search</code></td><td>一次请求扇出多个源，返回信封数组 + 汇总 meta</td></tr>
             <tr><td><span class="method get">GET</span></td><td><code>/v1/schema</code></td><td>网关自身的 meta 规范</td></tr>
             <tr><td><span class="method get">GET</span></td><td><code>/v1/stats</code></td><td>缓存命中率、预热状态、解析引擎</td></tr>
             <tr><td><span class="method get">GET</span></td><td><code>/openapi.json</code></td><td>OpenAPI 3.1 描述（代码生成器可直接吃）</td></tr>
@@ -268,7 +269,7 @@ make up                # docker compose up -d --build
         </a>
         <a class="card" href="mcp.html">
           <div class="card-title">我要让 AI 用它</div>
-          <div class="card-desc">MCP server 暴露 5 个工具，优先走 Go 网关，不可达时回落本地 resolver。</div>
+          <div class="card-desc">MCP server 暴露 6 个工具，优先走 Go 网关，不可达时回落本地 resolver。</div>
         </a>
         <a class="card" href="adding-source.html">
           <div class="card-title">我要加一个新源</div>

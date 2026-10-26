@@ -277,7 +277,11 @@ def is_slow(row: dict[str, Any]) -> bool:
                 walk(v)
 
     walk(row)
-    return bool(types & {"timeout", "budget_exceeded", "ConnectError"})
+    # 传输层失败的三个类型名(两个平面共用同一套词表, 见 resolver.py 的
+    # _transport_error_type 与 Go 侧 upstreamErrorType):
+    # connect_error / read_error / upstream_error。旧名 ConnectError 已不再使用。
+    return bool(types & {"timeout", "budget_exceeded",
+                         "connect_error", "read_error", "upstream_error"})
 
 
 def run_all(args: argparse.Namespace) -> int:
@@ -559,6 +563,10 @@ def main(argv: list[str] | None = None) -> int:
     payload: Any = None
     data: Any = None
     body_not_json = False
+    # 通用透传端点(entry)按设计就是"官方入口直取": 正文是 HTML 页面属于预期结果,
+    # 不是错误页。对它做 JSON 断言会把几十个只有 entry 端点的源全判成失败,
+    # 从而淹没真正需要修的源。这里只对它断言"入口可达且返回了正文"。
+    is_generic_entry = ep.get("id") == "entry"
     if raw_body is not None:
         text = raw_body.decode("utf-8", "replace")
         # 严格解析: 上游正文不是 JSON(错误页 / WAF 拦截页)时, 把它单独报出来。
@@ -570,18 +578,21 @@ def main(argv: list[str] | None = None) -> int:
         except _bs.UpstreamNotJSONError as exc:
             body_not_json = True
             payload = None
-            assertions.add("upstream_body_is_json", False, "hard",
-                           f"上游返回的不是 JSON(疑似 HTML 错误页): {exc}")
+            assertions.add(
+                "upstream_body_is_json",
+                is_generic_entry,
+                "warn" if is_generic_entry else "hard",
+                "端点 entry 是通用透传(官方入口直取), 正文为 HTML 属预期"
+                if is_generic_entry
+                else f"上游返回的不是 JSON(疑似 HTML 错误页): {exc}")
             # 正文不是 JSON 时, item_path / total_field / 字段名断言都没有意义
             # (拿错误页去比对路径, 只会误导)。如实记成"因上游非 JSON 跳过"。
-            assertions.add("item_path_resolves_to_list", True, "warn",
-                           "上游返回的不是 JSON, 已跳过该断言")
-            assertions.add("total_field_resolves_to_number", True, "warn",
-                           "上游返回的不是 JSON, 已跳过该断言")
-            assertions.add("declared_fields_present", True, "warn",
-                           "上游返回的不是 JSON, 已跳过该断言")
-            assertions.add("data_not_empty", True, "warn",
-                           "上游返回的不是 JSON, 已跳过该断言")
+            skip_reason = ("端点 entry 为通用透传, 无声明结构可断言"
+                           if is_generic_entry else "上游返回的不是 JSON, 已跳过该断言")
+            assertions.add("item_path_resolves_to_list", True, "warn", skip_reason)
+            assertions.add("total_field_resolves_to_number", True, "warn", skip_reason)
+            assertions.add("declared_fields_present", True, "warn", skip_reason)
+            assertions.add("data_not_empty", True, "warn", skip_reason)
         if payload is not None:
             data, total, truncated = runtime.project(payload, ep, limit=args.limit)
         if upstream_status is not None and upstream_status >= 400:
@@ -589,6 +600,19 @@ def main(argv: list[str] | None = None) -> int:
                            f"上游返回 HTTP {upstream_status}: {text[:200]}")
             assertions.add("upstream_not_error", False, "hard",
                            f"上游 HTTP {upstream_status}, 算降级, 不能算'源已跑通'")
+        elif body_not_json and not is_generic_entry:
+            # 状态码是 200 但正文是 HTML 错误页: 这**不是**"上游正常返回"。
+            # 上游状态正常 ≠ 拿到数据 —— 说成"正常返回, 未降级"会重新制造
+            # 本轮要消灭的假成功观感。通用透传端点(entry)除外: 它本来就是取页面。
+            assertions.add("upstream_status_ok", True, "hard",
+                           f"上游 HTTP {upstream_status}, {len(raw_body)}B")
+            assertions.add("upstream_not_error", False, "hard",
+                           "上游状态码正常, 但正文不是 JSON(疑似错误页), 算降级")
+        elif body_not_json and is_generic_entry:
+            assertions.add("upstream_status_ok", True, "hard",
+                           f"上游 HTTP {upstream_status}, {len(raw_body)}B")
+            assertions.add("upstream_not_error", True, "hard",
+                           "通用透传端点取到官方入口页面(非结构化数据), 入口可达")
         else:
             assertions.add("upstream_status_ok", True, "hard",
                            f"上游 HTTP {upstream_status}, {len(raw_body)}B")
@@ -640,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
     if upstream_status is None and transport == "direct":
         status = "unreachable"
 
-    if body_not_json:
+    if body_not_json and not is_generic_entry:
         # 诊断口径: 这是"上游给了错误页", 不是"端点元数据写错了"。
         errors.append("上游返回的不是 JSON(疑似 HTML 错误页) —— 改上游可访问性, 不要改 item_path/total_field")
 

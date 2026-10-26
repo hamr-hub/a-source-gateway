@@ -72,9 +72,11 @@
 
       <h1>API 参考</h1>
       <p class="lede">
-        网关一共 <strong>13 条路由</strong>，全部返回 JSON。查数据的三条路由
+        网关一共 <strong>14 条路由</strong>，全部返回 JSON。查数据的三条路由
         （<code>GET/POST /v1/query</code>、<code>GET /v1/sources</code>）返回统一的
-        <strong><code>{meta, data, fields}</code> 三段式信封</strong>；其余是元数据与运维接口。
+        <strong><code>{meta, data, fields}</code> 三段式信封</strong>；
+        <code>POST /v1/search</code> 一次请求扇出多个源，返回<strong>信封数组 + 汇总 meta</strong>；
+        其余是元数据与运维接口。
         单次调用的硬上限是 <strong>500ms</strong>，取不到就降级返回，不会挂死你。
       </p>
 
@@ -138,6 +140,7 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
             <tr><td><span class="method get">GET</span></td><td><code>/v1/sources/{source_id}/endpoints/{endpoint_id}</code></td><td>端点的请求参数与响应结构</td><td><span class="badge ok">200</span> <span class="badge danger">404</span></td></tr>
             <tr><td><span class="method get">GET</span></td><td><code>/v1/query</code></td><td>查询（便于浏览器直接打开）</td><td><span class="badge ok">200</span> <span class="badge warn">400</span> <span class="badge warn">422</span> <span class="badge danger">404</span></td></tr>
             <tr><td><span class="method post">POST</span></td><td><code>/v1/query</code></td><td>查询（推荐）</td><td><span class="badge ok">200</span> <span class="badge warn">422</span> <span class="badge danger">404</span></td></tr>
+            <tr><td><span class="method post">POST</span></td><td><code>/v1/search</code></td><td>搜索（一次请求扇出多个源）</td><td><span class="badge ok">200</span> <span class="badge warn">422</span></td></tr>
           </tbody>
         </table>
       </div>
@@ -150,6 +153,11 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
             <code>{meta, data, fields}</code>。<code>GET /v1/sources/{id}</code>、
             <code>GET /v1/sources/{id}/endpoints/{eid}</code> 只返回 <code>{meta, data}</code>（没有
             <code>fields</code>），<code>/v1/stats</code>、<code>/</code>、探针接口则各自有自己的形状。
+          </p>
+          <p>
+            <code>POST /v1/search</code> 也不是单个三段式信封：它返回
+            <strong>信封数组 + 汇总 meta</strong> —— 顶层 <code>meta</code> 汇总这次扇出，
+            <code>results[]</code> 里每一项<strong>各自是一个源的信封</strong>。详见下文。
           </p>
         </div>
       </div>
@@ -170,7 +178,7 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
             <tr><td><code>families</code></td><td>string[]</td><td>分类列表（按名称排序）</td></tr>
             <tr><td><code>offline</code></td><td>bool</td><td>是否离线模式</td></tr>
             <tr><td><code>routes</code></td><td>string[]</td><td>网关自述的业务路由表（7 条）</td></tr>
-            <tr><td><code>mcp</code></td><td>object</td><td><code>command</code> 启动命令 + <code>tools</code> 五个 MCP 工具名</td></tr>
+            <tr><td><code>mcp</code></td><td>object</td><td><code>command</code> 启动命令 + <code>tools</code> MCP 工具名列表（网关自述；以 MCP server 实际注册的工具为准，见 <a href="mcp.html">MCP 集成</a>）</td></tr>
           </tbody>
         </table>
       </div>
@@ -539,6 +547,246 @@ $ curl -s -X POST http://127.0.0.1:8848/v1/query \
         <code>meta.errors[].type = "endpoint_not_found"</code> 里。
       </p>
 
+      <h3>POST /v1/search —— 搜索（一次请求扇出多个源）</h3>
+      <p>
+        一个请求里跑多条查询：每条查询打各自的源，<strong>并发执行、各自一份 ≤500ms 预算</strong>，
+        所以整体墙钟约等于<strong>最慢的那一条</strong>，而不是所有条的总和。
+        适合"同一个问题横向看几个源"——比如同一组关键词同时打在一批源上。
+      </p>
+      <p>
+        请求体有<strong>两种形态</strong>；<code>queries</code> 非空时<strong>优先</strong>用它，
+        两个都给也以 <code>queries</code> 为准。
+      </p>
+
+      <p><strong>形态 A —— 显式扇出</strong></p>
+      <p>自己指定每一条查询打哪个源、哪个端点：</p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>curl -s -X POST http://127.0.0.1:8848/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "queries": [
+      {"source": "crossref", "endpoint": "works",
+       "params": {"filter": "from-index-date:2026-10-21"}, "limit": 2},
+      {"source": "gleif_lei", "endpoint": "lei_records",
+       "params": {"size": 2}, "limit": 2}
+    ],
+    "limit": 2
+  }'
+</code></pre>
+      </div>
+      <p class="inline-hint">
+        两条查询用的源与端点都是仓库里真实存在的：<code>crossref/works</code> 来自
+        <code>data/endpoints.json</code> 的 <code>Crossref</code> 条目，<code>gleif_lei/lei_records</code>
+        来自同文件的 <code>GLEIF LEI</code> 条目（源 id 由清单里的源名规范化而来，见
+        <code>data/source_inventory.csv</code>）。
+      </p>
+
+      <p><strong>形态 B —— 关键词扇出</strong></p>
+      <p>
+        只给一个关键词，让网关按<strong>与 <code>GET /v1/sources?q=</code> 相同的搜索索引</strong>选源：
+        关键词大小写不敏感地匹配源的<strong>规范 id、全部别名、名称、机构、国别、分类、摘要</strong>与
+        <strong>该源全部端点 id</strong>。每个命中的源各跑它自己的第一个<strong>非通用</strong>端点
+        （跳过自动派生的通用端点 <code>entry</code>）。
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>curl -s -X POST http://127.0.0.1:8848/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"q": "制裁", "limit": 2, "max_sources": 3}'
+</code></pre>
+      </div>
+
+      <p><strong>请求体字段</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>queries</code></td><td>array</td><td>否</td><td>—</td><td>显式扇出的查询列表；非空时逐项各跑一次查询</td></tr>
+            <tr><td><code>q</code></td><td>string</td><td>否</td><td>—</td><td>关键词扇出：按搜索索引选源（仅在 <code>queries</code> 缺省或为空时生效）</td></tr>
+            <tr><td><code>limit</code></td><td>int</td><td>否</td><td><code>5</code></td><td>每条查询最多返回多少条，取值 <strong>1–100</strong>；越界会被<strong>钳到范围内</strong>（不报错）</td></tr>
+            <tr><td><code>max_sources</code></td><td>int</td><td>否</td><td><code>12</code></td><td>关键词扇出时最多选多少个源，取值 <strong>1–50</strong>；越界同样被钳位；<strong>只对 <code>q</code> 形态生效</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong><code>queries[]</code> 里每一项的字段</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>source</code></td><td>string</td><td>是</td><td>—</td><td>源 id（也接受别名，见下文）</td></tr>
+            <tr><td><code>endpoint</code></td><td>string</td><td>否</td><td><code>entry</code></td><td>端点 id；缺省用通用透传端点 <code>entry</code></td></tr>
+            <tr><td><code>params</code></td><td>object</td><td>否</td><td><code>{}</code></td><td>端点请求参数；<strong>键顺序原样保留</strong>（渲染出的 URL 与缓存键由它决定）</td></tr>
+            <tr><td><code>limit</code></td><td>int</td><td>否</td><td>顶层 <code>limit</code></td><td>这一条最多返回多少条</td></tr>
+            <tr><td><code>fields</code></td><td>string[]</td><td>否</td><td><code>[]</code></td><td>只回这些字段</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <code>queries</code> 为空、<code>q</code> 又没给时，接口返回
+        <span class="badge warn">422</span>，<code>msg</code> 是
+        <code>Field required: provide "queries" or "q"</code>。
+      </p>
+
+      <p><strong>响应结构</strong></p>
+      <p>
+        返回的是<strong>信封数组 + 汇总 meta</strong>：顶层 <code>meta</code> 描述<strong>整次扇出</strong>，
+        <code>results[]</code> 里每一项<strong>各自是一个源的信封</strong>。
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "meta": {
+    "requested": 2,
+    "ok": 1,
+    "degraded": 1,
+    "failed": 0,
+    "with_data": 1,
+    "budget_ms": 500,
+    "latency_ms": 42,
+    "trace_id": "…",
+    "schema_version": "1.2"
+  },
+  "queries": ["crossref/works", "gleif_lei/lei_records"],
+  "results": [
+    {
+      "source": "crossref",
+      "endpoint": "works",
+      "degraded": false,
+      "cached": false,
+      "latency_ms": 1,
+      "count": 2,
+      "total": null,
+      "data": [ { "…": "条目" } ],
+      "fields": [ "…" ],
+      "errors": []
+    },
+    {
+      "source": "gleif_lei",
+      "endpoint": "lei_records",
+      "degraded": true,
+      "cached": false,
+      "latency_ms": 400,
+      "count": 0,
+      "total": null,
+      "data": [],
+      "fields": [],
+      "fallback": {
+        "upstream_url": "https://api.gleif.org/api/v1/lei-records?…",
+        "method": "GET",
+        "hint": "网关预算内取不到;可直连上游, 或稍后重试(后台正在补数)"
+      },
+      "errors": [
+        { "type": "timeout", "message": "上游超过 400ms 预算, 已降级" }
+      ]
+    }
+  ]
+}
+</code></pre>
+      </div>
+      <p class="inline-hint">
+        上面是<strong>结构示意</strong>：字段名与形状来自实现，具体条数、耗时、总数随上游与网络变化，
+        以你本地跑出来的为准。
+      </p>
+      <p><strong><code>meta</code> 里五个计数字段的含义</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>requested</code></td><td>int</td><td>这次实际发起的查询条数，恒等于 <code>ok + degraded + failed</code>（三类<strong>互斥</strong>）</td></tr>
+            <tr><td><code>ok</code></td><td>int</td><td>既没降级、也没有 error 的条数</td></tr>
+            <tr><td><code>degraded</code></td><td>int</td><td>降级条数（超时、上游报错、解析失败等）</td></tr>
+            <tr><td><code>failed</code></td><td>int</td><td>没降级但有 error 的条数 —— 未知源 / 未知端点这类<strong>硬失败</strong></td></tr>
+            <tr><td><code>with_data</code></td><td>int</td><td><code>count > 0</code> 的条数</td></tr>
+            <tr><td><code>budget_ms</code></td><td>int</td><td>本次总预算（默认 <code>500</code>），每个源各自一份</td></tr>
+            <tr><td><code>latency_ms</code></td><td>int</td><td>整次扇出的墙钟耗时（约等于最慢的那条）</td></tr>
+            <tr><td><code>trace_id</code></td><td>string</td><td>本次请求的链路 id</td></tr>
+            <tr><td><code>schema_version</code></td><td>string</td><td>信封结构版本</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong><code>results[]</code> 里每一项的字段</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>source</code> / <code>endpoint</code></td><td>string</td><td>这一条实际命中的规范源 id 与端点 id</td></tr>
+            <tr><td><code>degraded</code></td><td>bool</td><td>这一条是否降级</td></tr>
+            <tr><td><code>cached</code></td><td>bool</td><td>这一条是否命中缓存</td></tr>
+            <tr><td><code>latency_ms</code></td><td>int</td><td>这一条自己的耗时</td></tr>
+            <tr><td><code>count</code></td><td>int</td><td>这一条返回的条数</td></tr>
+            <tr><td><code>total</code></td><td>int / null</td><td>这一条的上游记录总数</td></tr>
+            <tr><td><code>data</code></td><td>array / object</td><td>这一条的结果</td></tr>
+            <tr><td><code>fields</code></td><td>string[]</td><td>这一条返回的字段名</td></tr>
+            <tr><td><code>errors</code></td><td>array</td><td>这一条的错误列表，<strong>始终存在</strong>；无错时是 <code>[]</code>，每项形如 <code>{"type":…,"message":…}</code></td></tr>
+            <tr><td><code>fallback</code></td><td>object</td><td>降级时的直连兜底；<strong>只在降级且有直连指引时才出现</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <code>queries[i]</code> 与 <code>results[i]</code> <strong>一一对应且顺序一致</strong>，
+        <code>queries[i]</code> 的格式是 <code>"&lt;source&gt;/&lt;endpoint&gt;"</code>
+        （例如 <code>"crossref/works"</code>）。按序号配对即可，不用在结果里反查。
+      </p>
+
+      <div class="callout tip">
+        <div class="callout-title"><span class="callout-icon">✓</span>一个源坏了，不影响整次调用</div>
+        <div class="callout-body">
+          <p>
+            未知源、未知端点、上游超时，都<strong>只写进那一条的 <code>errors</code></strong>；
+            整体仍然返回 <span class="badge ok">200</span>。
+            这与 <code>POST /v1/query</code> <strong>刻意不同</strong> ——
+            后者遇到未知源会返回 <span class="badge danger">404</span>。
+          </p>
+          <p>
+            理由很直接：搜索要的是"一次看多个源"。一个源坏了不该让整次调用失败，
+            否则调用方只能一次次重试，把能用的源也一起拖下水。
+            调用方要判断"哪些源真的拿到了数据"，看 <code>meta.with_data</code> 与每条的
+            <code>errors</code> 就行。
+          </p>
+        </div>
+      </div>
+
+      <p><strong>校验失败（<span class="badge warn">422</span>）</strong></p>
+      <p>
+        响应体与 FastAPI 的校验错误同形：<code>{"detail":[{"type":…,"loc":[…],"msg":…,"input":…}]}</code>。
+        嵌套字段的 <code>loc</code> 把整条路径放在<strong>一个段</strong>里
+        （<code>["body","queries.0.source"]</code>），而不是拆成 <code>["body","queries",0,"source"]</code>。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>type</th><th>什么时候</th><th>msg</th></tr></thead>
+          <tbody>
+            <tr><td><code>json_invalid</code></td><td>请求体不是合法 JSON</td><td><code>Invalid JSON body</code></td></tr>
+            <tr><td><code>model_attributes_type</code></td><td>请求体不是对象</td><td><code>Input should be a valid dictionary or object to extract fields from</code></td></tr>
+            <tr><td><code>list_type</code></td><td><code>queries</code> 不是数组</td><td><code>Input should be a valid list</code></td></tr>
+            <tr><td><code>dict_type</code></td><td><code>queries[i]</code> 或 <code>params</code> 不是对象</td><td><code>Input should be a valid dictionary</code></td></tr>
+            <tr><td><code>missing</code></td><td>缺 <code>source</code>；或 <code>queries</code> 为空且 <code>q</code> 也缺（或 <code>q</code> 是空串）</td><td><code>Field required</code> / <code>Field required: provide "queries" or "q"</code></td></tr>
+            <tr><td><code>string_type</code></td><td><code>source</code> / <code>endpoint</code> / <code>q</code> / <code>fields[i]</code> 不是字符串</td><td><code>Input should be a valid string</code></td></tr>
+            <tr><td><code>int_type</code></td><td><code>limit</code> / <code>max_sources</code> / <code>queries[i].limit</code> 不是整数</td><td><code>Input should be a valid integer</code></td></tr>
+            <tr><td><code>list_type</code></td><td><code>fields</code> 不是数组</td><td><code>Input should be a valid list</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">console</span></div>
+        <pre><code>$ curl -s -X POST http://127.0.0.1:8848/v1/search \
+    -H 'Content-Type: application/json' \
+    -d '{"queries":[{"endpoint":"works"}]}'
+{"detail":[{"type":"missing","loc":["body","queries.0.source"],"msg":"Field required","input":null}]}
+
+$ curl -s -X POST http://127.0.0.1:8848/v1/search \
+    -H 'Content-Type: application/json' \
+    -d '{"limit":3}'
+{"detail":[{"type":"missing","loc":["body","queries"],"msg":"Field required: provide \"queries\" or \"q\"","input":null}]}
+</code></pre>
+      </div>
+      <p>
+        注意 <code>limit</code> 与 <code>max_sources</code> 与 <code>POST /v1/query</code> 的
+        <code>limit</code> 行为不同：查询接口越界报 <span class="badge warn">422</span>，
+        搜索接口<strong>钳到范围内</strong>（<code>limit</code> → 1–100，<code>max_sources</code> → 1–50）。
+      </p>
+
       <h2>查询参数详解</h2>
 
       <h3>source：源怎么解析</h3>
@@ -621,12 +869,12 @@ curl -s "http://127.0.0.1:8848/v1/sources/GLEIF%20LEI"
             </tr>
             <tr>
               <td><span class="badge danger">404</span></td>
-              <td>未知源 / 未知端点（描述类接口）/ 未知路径</td>
+              <td>未知源 / 未知端点（描述类接口）/ 未知路径。<strong>注意</strong>：<code>POST /v1/search</code> 的未知源不走 404 —— 它整体返回 200，失败写在该条的 <code>errors</code> 里</td>
               <td><code>{"detail":"未知数据源 xxx"}</code>、<code>{"detail":"未知源 xxx"}</code>、<code>{"detail":"未知端点 xxx/yyy"}</code>、<code>{"detail":"Not Found"}</code></td>
             </tr>
             <tr>
               <td><span class="badge warn">422</span></td>
-              <td>参数校验失败（FastAPI 风格）：缺 <code>source</code>/<code>endpoint</code>、<code>params</code> 不是对象、<code>fields</code> 不是字符串数组、<code>limit</code> 不在 1–500、<code>timeout_ms</code> 不在 50–500、它们不是整数</td>
+              <td>参数校验失败（FastAPI 风格）：缺 <code>source</code>/<code>endpoint</code>、<code>params</code> 不是对象、<code>fields</code> 不是字符串数组、<code>limit</code> 不在 1–500、<code>timeout_ms</code> 不在 50–500、它们不是整数；<code>POST /v1/search</code> 则是请求体本身不合法（不是 JSON、不是对象、缺 <code>source</code>、类型不对、既没 <code>queries</code> 也没 <code>q</code>）</td>
               <td><code>{"detail":[{"type":...,"loc":[...],"msg":...,"input":...}]}</code></td>
             </tr>
             <tr>
@@ -659,7 +907,7 @@ curl -s "http://127.0.0.1:8848/v1/sources/GLEIF%20LEI"
           <tbody>
             <tr><td><code>timeout</code></td><td>上游超过 400ms 预算（或解析用完了剩余预算），已降级</td><td>稍后重试，命中缓存；或用 <code>fallback.upstream_url</code> 直连</td></tr>
             <tr><td><code>budget_exceeded</code></td><td>客户端可见耗时超过本次预算</td><td>结果被截到前 5 条且 <code>truncated=true</code>，按需重试</td></tr>
-            <tr><td><code>upstream_error</code></td><td>上游返回了 ≥400 的状态码（带 <code>status</code>）</td><td>看 <code>meta.upstream.status</code>，多半是参数问题</td></tr>
+            <tr><td><code>upstream_error</code></td><td>上游返回了 ≥400 的状态码（带 <code>status</code>），或其余传输层故障</td><td>看 <code>meta.upstream.status</code>，多半是参数问题</td></tr>
             <tr><td><code>parse_error</code></td><td>上游返回了但解析不了（结构与端点定义对不上）</td><td>核对端点定义，或直连上游</td></tr>
             <tr><td><code>response_too_large</code></td><td>响应体超过上限被截断，或端点是文件型大响应</td><td>减小 <code>limit</code> 重试，或直连上游</td></tr>
             <tr><td><code>missing_param</code></td><td>缺端点要求的必填参数</td><td>照端点定义补 <code>params</code></td></tr>
@@ -674,13 +922,18 @@ curl -s "http://127.0.0.1:8848/v1/sources/GLEIF%20LEI"
         </table>
       </div>
       <div class="callout info">
-        <div class="callout-title"><span class="callout-icon">i</span>还有三个传输层错误名</div>
+        <div class="callout-title"><span class="callout-icon">i</span>传输层失败有三个共用名字</div>
         <div class="callout-body">
           <p>
-            DNS 解析失败、连接被拒、连接被重置这类<strong>传输层</strong>故障，
-            <code>type</code> 用的是 httpx 异常类名：<code>ConnectError</code>、<code>ReadError</code>、
-            <code>UpstreamError</code>（Python 参照实现用 <code>type(e).__name__</code>，Go 网关映射到同样的名字）。
-            处理方式和 <code>timeout</code> 一样：看 <code>fallback</code>，稍后重试。
+            上游<strong>连不上</strong>（域名解析失败 / 连接被拒 / 证书问题）报
+            <code>connect_error</code>；<strong>连上了但中途断了</strong>（连接被重置 /
+            服务端提前关闭 / EOF）报 <code>read_error</code>；其余传输层故障报
+            <code>upstream_error</code>。这三个名字<strong>两个平面共用</strong>，
+            所以同一个失败在 Go 网关与 Python 参照面上给出同一个 <code>type</code>。
+          </p>
+          <p>
+            原始异常文本照旧放在 <code>errors[].message</code> 里 —— 各运行时措辞不同，
+            那是事实，不强行统一。处置和 <code>timeout</code> 一样：看 <code>fallback</code>，稍后重试。
           </p>
         </div>
       </div>
@@ -781,7 +1034,7 @@ curl -s "http://127.0.0.1:8848/v1/sources/GLEIF%20LEI"
         </a>
         <a class="card" href="mcp.html">
           <div class="card-title">MCP 集成</div>
-          <div class="card-desc">让 AI 智能体直接调用这 13 条路由：5 个 MCP 工具，优先走 Go 网关。</div>
+          <div class="card-desc">让 AI 智能体直接调用这 14 条路由：6 个 MCP 工具，优先走 Go 网关。</div>
         </a>
         <a class="card" href="adding-source.html">
           <div class="card-title">加源指南</div>

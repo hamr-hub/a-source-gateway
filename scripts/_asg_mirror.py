@@ -313,7 +313,7 @@ class NotJSONError(Exception):
     """
 
     def __init__(self, preview: str):
-        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页): {preview}")
+        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: {preview}")
         self.preview = preview
 
 

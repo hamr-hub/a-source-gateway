@@ -141,8 +141,70 @@
             <code>/</code>、<code>/v1/stats</code>、三个探针、<code>/v1/schema</code>
             各自有自己的形状，不走信封。
           </p>
+          <p>
+            <code>POST /v1/search</code> 走的是<strong>信封数组 + 汇总 meta</strong>：
+            它一次返回多个源的结果，不是单个三段式信封。下一节专门讲它。
+          </p>
         </div>
       </div>
+
+      <h2>搜索接口：三段式的对应关系</h2>
+      <p>
+        <code>POST /v1/search</code> 一次扇出多个源，所以它<strong>没有</strong>单个
+        <code>{meta, data, fields}</code> 信封，而是返回
+        <strong><code>{meta, queries, results}</code></strong>：
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>三段式</th><th>搜索接口里的对应</th><th>谁该看</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>meta</code></td>
+              <td>顶层 <code>meta</code>：描述<strong>整次扇出</strong>，带
+              <code>requested</code> / <code>ok</code> / <code>degraded</code> /
+              <code>failed</code> / <code>with_data</code> 五个计数字段
+              （<code>requested = ok + degraded + failed</code>，三类互斥）</td>
+              <td>你的框架/SDK：一眼看出"几条拿到了、几条降级了、几条直接失败了"</td>
+            </tr>
+            <tr>
+              <td><code>data</code></td>
+              <td><code>results[i].data</code>：第 i 条查询自己的结果</td>
+              <td>你的业务代码</td>
+            </tr>
+            <tr>
+              <td><code>fields</code></td>
+              <td><code>results[i].fields</code>：第 i 条查询返回的字段名</td>
+              <td>你的类型校验/文档生成</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        换句话说，<strong><code>results[]</code> 里每一项都是一个源自己的信封</strong>
+        （<code>source</code>、<code>endpoint</code>、<code>degraded</code>、<code>cached</code>、
+        <code>latency_ms</code>、<code>count</code>、<code>total</code>、<code>data</code>、
+        <code>fields</code>、<code>errors</code>，降级时还有 <code>fallback</code>），
+        顶层 <code>meta</code> 是它们的汇总。
+        <code>queries[i]</code> 与 <code>results[i]</code> 一一对应、顺序一致，
+        <code>queries[i]</code> 的格式是 <code>"&lt;source&gt;/&lt;endpoint&gt;"</code>。
+      </p>
+      <div class="callout tip">
+        <div class="callout-title"><span class="callout-icon">✓</span>降级语义不变，只是作用在单条上</div>
+        <div class="callout-body">
+          <p>
+            某一个源超时，只让<strong>那一条</strong> <code>degraded=true</code> +
+            <code>fallback.upstream_url</code>；其余源照常返回，整次调用仍是
+            <span class="badge ok">200</span>。未知源 / 未知端点这类硬失败也只写进那一条的
+            <code>errors</code>（那条计入 <code>failed</code>），不会让整次搜索失败 ——
+            与 <code>POST /v1/query</code> 遇未知源返回 <span class="badge danger">404</span>
+            是<strong>刻意不同</strong>的。
+          </p>
+        </div>
+      </div>
+      <p>
+        完整字段与请求形态见 <a href="api.html">API 参考</a>里的
+        <code>POST /v1/search</code> 一节。
+      </p>
 
       <h2>meta 字段全表</h2>
       <div class="table-wrap">
@@ -419,9 +481,9 @@ X-Gateway-Trace-Id: ac9f72d36d8df3283905a136c399b306
           <tbody>
             <tr><td><code>timeout</code></td><td>上游超过 400ms 预算，或解析用完了剩余预算</td><td><span class="badge ok">200</span></td><td>上游超过 400ms 预算, 已降级</td></tr>
             <tr><td><code>budget_exceeded</code></td><td>客户端可见耗时超过本次预算</td><td><span class="badge ok">200</span></td><td>客户端可见耗时 520ms 超过预算 500ms</td></tr>
-            <tr><td><code>upstream_error</code></td><td>上游返回 ≥400 的状态码（带 <code>status</code>）</td><td><span class="badge ok">200</span></td><td>上游响应体前 300 字符</td></tr>
-            <tr><td><code>upstream_not_json</code></td><td>上游返回的不是 JSON（常见于上游错误页 / WAF 拦截页）</td><td><span class="badge ok">200</span></td><td>上游返回的不是 JSON(疑似 HTML 错误页): &lt;!DOCTYPE html&gt;…</td></tr>
-            <tr><td><code>parse_error</code></td><td>上游返回了，但按端点定义解析不出来</td><td><span class="badge ok">200</span></td><td>解析器报错信息（截到 300 字符）</td></tr>
+            <tr><td><code>upstream_error</code></td><td>上游返回 ≥400 的状态码（带 <code>status</code>），或其余传输层故障</td><td><span class="badge ok">200</span></td><td>上游响应体前 300 字符 / 原始异常文本</td></tr>
+            <tr><td><code>upstream_not_json</code></td><td>上游返回的不是 JSON（常见于上游错误页 / WAF 拦截页）</td><td><span class="badge ok">200</span></td><td>上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: &lt;!DOCTYPE html&gt;…</td></tr>
+            <tr><td><code>parse_error</code></td><td>上游返回了，但按端点定义解析不出来（目前只有 Go 网关会产生；Python 参照面解析不了正文时报 <code>upstream_not_json</code>）</td><td><span class="badge ok">200</span></td><td>解析器报错信息（截到 300 字符）</td></tr>
             <tr><td><code>response_too_large</code></td><td>响应体超过上限被截断，或端点是文件型大响应</td><td><span class="badge ok">200</span></td><td>响应超过 1MB 上限被截断;请减小 limit 或直连上游</td></tr>
             <tr><td><code>missing_param</code></td><td>缺端点要求的必填参数</td><td><span class="badge ok">200</span></td><td>缺少必填参数 cik</td></tr>
             <tr><td><code>endpoint_not_found</code></td><td>该源没有这个端点 id</td><td><span class="badge ok">200</span></td><td>gleif_lei 没有端点 xxx</td></tr>
@@ -431,15 +493,18 @@ X-Gateway-Trace-Id: ac9f72d36d8df3283905a136c399b306
             <tr><td><code>offline</code></td><td>网关处于离线模式</td><td><span class="badge ok">200</span></td><td>网关处于离线模式, 仅提供元数据与缓存</td></tr>
             <tr><td><code>stale</code></td><td>缓存已过期，返回陈旧值并在后台刷新</td><td><span class="badge ok">200</span></td><td>缓存已过期 1200s, 返回陈旧值并在后台刷新</td></tr>
             <tr><td><code>internal_error</code></td><td>网关内部错误（panic 已被中间件兜住）</td><td><span class="badge ok">200</span></td><td>网关内部错误: ...</td></tr>
-            <tr><td><code>ConnectError</code></td><td>DNS 解析失败 / 连接被拒 / TLS 证书问题</td><td><span class="badge ok">200</span></td><td>传输层错误信息</td></tr>
-            <tr><td><code>ReadError</code></td><td>连接被重置 / 读取中断</td><td><span class="badge ok">200</span></td><td>传输层错误信息</td></tr>
-            <tr><td><code>UpstreamError</code></td><td>其它传输层故障</td><td><span class="badge ok">200</span></td><td>传输层错误信息</td></tr>
+            <tr><td><code>connect_error</code></td><td><strong>连不上</strong>：DNS 解析失败 / 连接被拒 / TLS 证书问题</td><td><span class="badge ok">200</span></td><td>传输层错误信息（原始异常文本）</td></tr>
+            <tr><td><code>read_error</code></td><td><strong>连上了但中途断了</strong>：连接被重置 / 服务端提前关闭 / EOF</td><td><span class="badge ok">200</span></td><td>传输层错误信息（原始异常文本）</td></tr>
           </tbody>
         </table>
       </div>
       <p>
-        最后三个是<strong>传输层</strong>的名字（Python 参照实现用 <code>type(e).__name__</code>，
-        Go 网关映射到同样的名字）。它们的处置和 <code>timeout</code> 一样：看 <code>fallback</code>，稍后重试。
+        最后两个是<strong>传输层</strong>的名字，两个平面<strong>共用同一套词表</strong>：
+        <code>connect_error</code>（根本没连上）、<code>read_error</code>（连上了但中途断了）、
+        <code>upstream_error</code>（其余传输层失败）—— 所以同一个失败在 Go 网关与 Python 参照面上
+        给出同一个 <code>errors[].type</code>，调用方只写一套分支。
+        原始异常文本照旧在 <code>message</code> 里：各运行时措辞不同，那是事实，不强行统一。
+        处置和 <code>timeout</code> 一样：看 <code>fallback</code>，稍后重试。
       </p>
       <div class="callout info">
         <div class="callout-title"><span class="callout-icon">i</span>请求层错误不在信封里</div>
@@ -572,7 +637,7 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
       <div class="card-grid">
         <a class="card" href="api.html">
           <div class="card-title">API 参考</div>
-          <div class="card-desc">13 条路由的参数、响应结构、状态码、错误码与可复制的 curl。</div>
+          <div class="card-desc">14 条路由的参数、响应结构、状态码、错误码与可复制的 curl。</div>
         </a>
         <a class="card" href="debug.html">
           <div class="card-title">API 调试台</div>
@@ -580,7 +645,7 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
         </a>
         <a class="card" href="mcp.html">
           <div class="card-title">MCP 集成</div>
-          <div class="card-desc">让 AI 智能体按这套语义消费信封：5 个 MCP 工具，优先走 Go 网关。</div>
+          <div class="card-desc">让 AI 智能体按这套语义消费信封：6 个 MCP 工具，优先走 Go 网关。</div>
         </a>
         <a class="card" href="index.html">
           <div class="card-title">回到首页</div>

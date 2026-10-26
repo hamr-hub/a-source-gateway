@@ -88,7 +88,36 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
   -H 'Content-Type: application/json' \
   -d '{"source":"crossref","endpoint":"works",
        "params":{"filter":"from-index-date:2026-10-21"},"limit":3}' | python3 -m json.tool
+
+# 一次请求扇出多个源(一个源坏了也不影响整次调用)
+curl -s -X POST http://127.0.0.1:8848/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"queries":[
+        {"source":"crossref","endpoint":"works","params":{"filter":"from-index-date:2026-10-21"},"limit":2},
+        {"source":"gleif_lei","endpoint":"lei_records","params":{"size":2},"limit":2}
+      ],"limit":2}' | python3 -m json.tool
 ```
+
+### HTTP 接口一览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 服务信息 + 路由表 + MCP 工具清单 |
+| GET | `/healthz` `/livez` `/readyz` | 健康 / 存活 / 就绪探针 |
+| GET | `/metrics` | Prometheus 指标 |
+| GET | `/v1/schema` | meta 规范本身 |
+| GET | `/openapi.json` | OpenAPI 3.1 描述(代码生成器可直接吃) |
+| GET | `/v1/stats` | 注册表、缓存与预热状态 |
+| GET | `/v1/sources?family=&q=&limit=` | 列源(轻量投影) |
+| GET | `/v1/sources/{source_id}` | 单源完整 meta |
+| GET | `/v1/sources/{source_id}/endpoints/{endpoint_id}` | 端点 meta |
+| GET / POST | `/v1/query` | 执行查询 → 信封 |
+| POST | `/v1/search` | **搜索**:一次请求扇出多个源 → 信封数组 + 汇总 meta |
+
+`POST /v1/search` 是"同一个问题横向看几个源"的入口:请求体给 `queries`(显式列出每条查询)
+或 `q`(按关键词选源);各源并发执行、各自一份 ≤500ms 预算,整体墙钟约等于最慢的那一条。
+**单个源失败不影响整次调用** —— 未知源 / 未知端点 / 上游超时都只写进那一条的 `errors`,
+整体仍返回 200(这与 `POST /v1/query` 遇未知源返回 404 刻意不同)。
 
 ### 接 MCP
 
@@ -109,10 +138,12 @@ curl -s -X POST http://127.0.0.1:8848/v1/query \
 | `get_source_meta` | `source` | 完整 meta(认证/限速/规模/增量/抓取方式/代理策略/风险) |
 | `describe_endpoint` | `source` `endpoint` | 端点的请求参数与响应结构 |
 | `query_source` | `source` `endpoint` `params?` `fields?` `limit?` `since?` `timeout_ms?` | 执行查询,返回信封 |
+| `search_sources` | `q` `limit?` `max_sources?` | 一次搜索多个源,返回紧凑版结果(对应 `POST /v1/search`) |
 | `get_meta_schema` | — | meta 规范本身 |
 
 **推荐调用序**:`list_sources` / `get_source_meta` 定位 → `describe_endpoint` 看参数 →
-`query_source` 取数。MCP server 优先转发到 Go 网关,网关不可达时回落到进程内的 Python 实现。
+`query_source` 取数;只想"一个关键词横向看几个源"就直接用 `search_sources`。
+MCP server 优先转发到 Go 网关,网关不可达时回落到进程内的 Python 实现。
 
 ### 不用服务也能用
 
@@ -203,6 +234,10 @@ print(env.meta.total, env.meta.latency_ms, env.meta.cached)
 
 完整字段定义见 [`docs/meta-schema.md`](docs/meta-schema.md),或运行时 `GET /v1/schema`。
 机器可读的 API 描述见 `GET /openapi.json`(OpenAPI 3.1,Go/Python 两平面同一路径,文档从路由表生成,不会漂移)。
+
+> **唯一的形状例外**:`POST /v1/search` 返回的是**信封数组 + 汇总 meta**
+> (`{meta, queries, results}`)——顶层 `meta` 汇总这次扇出,`results[]` 里每一项
+> **各自是一个源的信封**。字段见 [`docs/meta-schema.md`](docs/meta-schema.md) §1.3。
 
 ---
 
@@ -328,7 +363,7 @@ make docs                 # 起在 http://127.0.0.1:8000/(带网关代理, 调�
 | [**文档站 `site/`**](site/index.html) | **快速部署 / API 参考 / 信封与降级 / 在线调试台 / MCP 集成 / 加源指南** |
 | [`AGENTS.md`](AGENTS.md) | **智能体操作手册** —— "把 xxx 网站加进来"的完整流程 |
 | [`docs/architecture.md`](docs/architecture.md) | 方案文档:双平面架构、模块、数据流、协议、部署、演进 |
-| [`docs/tech-selection.md`](docs/tech-selection.md) | 技术选型:21 条 ADR(候选对比、决策与代价) |
+| [`docs/tech-selection.md`](docs/tech-selection.md) | 技术选型:22 条 ADR(候选对比、决策与代价) |
 | [`docs/optimization-report.md`](docs/optimization-report.md) | 现状指标、优化空间与可行性、优先级与投入产出 |
 | [`docs/meta-schema.md`](docs/meta-schema.md) | meta 规范:源/端点/请求/响应信封的字段定义 |
 | [`docs/performance.md`](docs/performance.md) | 性能基线、500ms 契约与压测方法 |

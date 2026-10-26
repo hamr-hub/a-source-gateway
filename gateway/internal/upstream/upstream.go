@@ -111,6 +111,10 @@ func New(opt Options) *Client {
 // the scheme, so that an official site which redirects http to https stays
 // reachable, while a redirect to another port of the same host is refused
 // as well.
+//
+// 官方源把文件放在自己的 CDN 上时(OFAC 的导出接口用 302 交出带签名的 S3 地址),
+// 端点模板要**指向最终地址**; 签名地址一小时就过期, 写不进模板 —— 那种源
+// 按"文件型源直连下载"处理(见 ADR-022)。
 func sameHostRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) == 0 {
 		return nil

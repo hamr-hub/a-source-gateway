@@ -74,12 +74,14 @@ def fake_gateway(monkeypatch):
 
 
 # ── 工具清单 ─────────────────────────────────────────────────────────────
-async def test_five_tools_with_expected_names():
+async def test_six_tools_with_expected_names():
     tools = await mcp_server.list_tools()
     assert [t.name for t in tools] == [
         "list_sources", "get_source_meta", "describe_endpoint",
-        "query_source", "get_meta_schema",
+        "query_source", "get_meta_schema", "search_sources",
     ]
+    search = next(t for t in tools if t.name == "search_sources")
+    assert search.inputSchema["required"] == ["q"]
 
 
 # ── 走 Go 网关 ───────────────────────────────────────────────────────────
@@ -103,6 +105,15 @@ async def test_query_source_posts_to_gateway(fake_gateway):
 async def test_get_meta_schema_uses_gateway(fake_gateway):
     out = _payload_of(await mcp_server.call_tool("get_meta_schema", {}))
     assert out["fake"] is True
+
+
+async def test_search_sources_posts_to_gateway(fake_gateway):
+    out = _payload_of(await mcp_server.call_tool(
+        "search_sources", {"q": "sec", "limit": 3}))
+    assert out["meta"]["gateway"] == "go"
+    method, path, body = [c for c in _FakeGateway.calls if c[0] == "POST"][0]
+    assert path == "/v1/search"
+    assert json.loads(body) == {"q": "sec", "limit": 3, "max_sources": 12}
 
 
 # ── 网关不可达 -> 本地回落 ───────────────────────────────────────────────
@@ -129,3 +140,44 @@ async def test_fallback_for_unknown_source_keeps_envelope_shape(monkeypatch):
     assert out["meta"]["gateway"] == "python-fallback"
     assert out["data"] is None
     assert "error" in out["meta"]
+
+
+async def test_search_sources_falls_back_to_local_resolver(monkeypatch):
+    """网关不可达 -> 回落本地 resolver(关键词命中不到任何源时不触网)。"""
+    monkeypatch.setenv("A_GATEWAY_URL", f"http://127.0.0.1:{_free_port()}")
+    out = _payload_of(await mcp_server.call_tool(
+        "search_sources", {"q": "zzz-没有这个源-zzz"}))
+    assert out["meta"]["gateway"] == "python-fallback"
+    assert out["queries"] == []
+    assert out["results"] == []
+
+
+async def test_search_sources_fallback_fans_out_with_the_shared_logic(monkeypatch):
+    """本地回落用的是与 HTTP 路由同一份扇出逻辑(search.py)。"""
+    import httpx
+
+    from a_source_gateway.config import load_config
+    from a_source_gateway.registry import build_registry
+    from a_source_gateway.resolver import Resolver
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"items": [{"a": 1}],
+                                                     "total-results": 1}})
+
+    cfg = load_config(contact="test@example.com")
+    resolver = Resolver(build_registry(cfg), transport=httpx.MockTransport(handler), cfg=cfg)
+    await resolver.startup()
+    monkeypatch.setattr(mcp_server, "_resolver", resolver)
+    monkeypatch.setenv("A_GATEWAY_URL", f"http://127.0.0.1:{_free_port()}")
+    try:
+        out = _payload_of(await mcp_server.call_tool(
+            "search_sources", {"q": "crossref", "limit": 2}))
+    finally:
+        await resolver.shutdown()
+    assert out["meta"]["gateway"] == "python-fallback"
+    assert "crossref/works" in out["queries"]
+    assert out["results"][0]["count"] == 1
+    assert out["results"][0]["source"] == "crossref"
+    # 紧凑版: 只留概要, 不带完整 data
+    assert set(out["results"][0]) == {"source", "endpoint", "count", "total",
+                                      "degraded", "errors", "data"}

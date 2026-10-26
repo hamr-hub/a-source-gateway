@@ -2,11 +2,68 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.0] - 2026-10-26
+
+搜索广度:一次请求扇出多个数据源;并把"延迟契约"与"数据正确性"拆成两条判据。
+
+### 新增
+- **`POST /v1/search`**:一次请求扇出多个数据源。请求体两种形态 —— `queries`
+  (显式列出每条查询打哪个源、哪个端点)或 `q`(按关键词选源,用与
+  `GET /v1/sources?q=` 相同的搜索索引);`queries` 非空时优先用它。各源**并发**执行、
+  各自一份 ≤500ms 预算,整体墙钟约等于最慢的那一条。响应是**信封数组 + 汇总 meta**
+  (`{meta, queries, results}`):顶层 `meta` 给 `requested` / `ok` / `degraded` / `failed` /
+  `with_data`(`requested = ok + degraded + failed`,三类互斥),`results[]` 里每一项
+  各自是一个源的信封,`queries[i]` 与 `results[i]` 一一对应。
+  **单个源失败不影响整次调用**:未知源 / 未知端点 / 上游超时都只写进那一条的 `errors`,
+  整体仍返回 200 —— 这与 `POST /v1/query` 遇未知源返回 404 刻意不同(搜索要的是
+  "一次看多个源",一个源坏了不该让整次调用失败)。
+- **MCP 工具 `search_sources`**:入参 `q`(必填)/ `limit`(默认 5)/ `max_sources`(默认 12),
+  行为与 `POST /v1/search` 一致(优先走 Go 网关,连不上时回落本地 resolver),
+  返回**紧凑版**结果:每个源给出 source/endpoint/count/total/degraded/errors,
+  `data` 按 limit 截断。
+
+### 变更
+- **传输层失败改用两个平面共用的词表**:上游**连不上**(域名解析失败 / 连接被拒 / 证书问题)
+  报 `connect_error`,**连上了但中途断了**(连接重置 / 服务端提前关闭 / EOF)报 `read_error`,
+  其余传输层失败报 `upstream_error`(上游返回 HTTP ≥400 一直就是这个名字);`timeout` 仍是
+  `timeout`。此前 Go 网关报 httpx 的异常类名(`ConnectError` / `ReadError` / `UpstreamError`),
+  Python 参照面报自己的异常类名(如 `RemoteProtocolError`)—— 同一个失败在两个平面上给出
+  **不同的 `errors[].type`**,调用方按 type 分支会漏掉一半。现在两平面逐条对齐,
+  `python/tests/test_error_taxonomy.py` 守住这张词表不再外扩。原始异常文本照旧放在
+  `errors[].message` 里(各运行时措辞不同,那是事实,不强行统一)。
+- **bench 结论拆成两条判据**:`pass` / `latency_ok` 只表示**延迟契约**成立(冷/热路径 p95、
+  max 都不超 500ms);数据正确性单独用 `data_ok` / `data_missing` 表达(热路径的每个用例
+  都要 `count > 0`),并新增 `verdict` 一句话结论:
+  `PASS — 延迟契约与数据正确性都成立` /
+  `PASS(仅延迟契约) · 数据正确性未达标: N/M 个热路径用例没有数据` /
+  `FAIL — 延迟契约不成立`。能不能拿到数据取决于上游限流与跨境网络,不是网关可控范围,
+  所以**不并进 `pass`**;但它必须是一个独立可见的字段 —— 此前"10 个用例全部降级、
+  count 全是 0"也会打印一句 PASS,把最该被看到的信号盖掉。详见
+  [`docs/performance.md`](docs/performance.md) §2.2。
+
+### 修复
+- **搜索的每个源都有 panic 兜底**:各源跑在自己的 goroutine 里,而中间件的
+  `RecoverMiddleware` 只兜得住处理请求那个 goroutine —— 一个源崩了会直接带走
+  整个网关进程。现在每个源单独 recover,记成那条结果的 `internal_error` 降级,
+  其余源照常返回。
+- **Python 参照面的默认参数与 Go 侧对齐**:凭据参数(p["env"])在环境变量没配时,
+  Python 会把这个参数**连同它声明的 `default` 一起丢掉**,Go 侧则照取 `default`
+  —— 同一个端点在两个平面渲染出的 URL 因此不同(搜索的关键词扇出会用到它)。
+  语义现在逐条对齐(`_default_params` ↔ `prewarmParams`)。
+
 ## [1.3.1] - 2026-10-26
 
 数据源健康度审计(直连实测 112 个端点)后的修复批次。
 
 ### 修复
+- **UN 安理会综合名单改指最终地址**:官方入口 `scsanctions.un.org` 现在 302 到
+  **带签名**的 blob 地址(签名 1 小时过期,写不进端点定义),旧址 `main.un.org` 则是
+  202 + 空正文 —— 两条路都取不到名单。实测该 blob 容器是**公开**的,去掉签名参数
+  直接可取(200 + 2.5MB XML),端点因此改指公开容器的最终地址。
+- **非 JSON 的错误文案统一**:三条路径(Go 引擎 / Python worker / Python 参照面)此前
+  各说各话,Go 引擎那条还把解码器的原始报错(`invalid character '<' …`)泄进了对外信封,
+  且整串在 300 字符处被截断时尾部片段会连同省略号一起被切掉。
+  现在统一成 `上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: …`,两平面逐字相同。
 - **凭据参数不再回落到占位符 example**(Go 与 Python 两平面同步):
   环境变量没配时, `YOUR_CENSUS_API_KEY` 这类占位符会被真的发给上游,
   上游回一个 200 + "Invalid Key" 的 HTML 页 —— 状态码是 200, 调用方
@@ -16,7 +73,9 @@
 - **SEC EDGAR `companyfacts` 的 `item_path`/`total_field` 移除**:
   `facts` 是按 taxonomy 分组的对象, 不是列表, 也没有总量字段。
 - **UN 安理会综合名单换址**:`main.un.org` 旧址已返回 202 + 空正文,
-  换成制裁委员会站点的现役地址(实测 200 + application/xml)。
+  制裁委员会站点的 `scsanctions.un.org` 则 302 到**带签名**的地址(签名 1 小时过期,
+  写不进端点定义)—— 两条路都取不到名单,端点最终改指 blob 公开容器的最终地址
+  (见上面第一条)。
 - **OFAC Consolidated**:PublicationPreview 的导出接口已返回 200 空正文,
   综合名单换成 treasury.gov downloads 目录的 `cons_advanced.xml`;
   DTC 部分官方没有可直接下载的 XML, 按规则 2("宁可诚实")移除端点。
@@ -90,6 +149,9 @@
   源规模到万级时需要换倒排索引。
 - Python 参照面**仍走 HTTP/1.1**:httpx 要用 h2 得装 `h2` 包,本项目不把它列为依赖。
   传输协议不属于信封 / 注册表的语义契约,Go 网关才是主运行时。
+- **"上游返回的不是 JSON"只对 `json` 形状生效**:`csv`/`tsv` 会把 HTML 当数据行解析,
+  `jsonl` 会跳过坏行得到空列表 —— 这两种形状下,上游的错误页**不会**被标成
+  `upstream_not_json`(两平面行为一致,不是两平面不一致)。
 
 ## [1.2.0] - 2026-10-24
 

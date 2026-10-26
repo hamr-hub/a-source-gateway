@@ -188,7 +188,7 @@ def slugify(name: str, idx: int, aliases: list[str] | None = None) -> str:
 def normalize_key(s: str) -> str:
     """检索键归一化: 小写后只保留 [a-z0-9]。
 
-    与 Go 侧 `normalizeKey`(gateway/internal/server/resolver.go)严格一致 ——
+    与 Go 侧 `NormalizeKey`(gateway/internal/registry/registry.go)严格一致 ——
     两边必须逐字符相同, 否则同一个键在两个平面上会解析到不同的源。
     纯中文等无 ASCII 字符的键归一化后为空串, 调用方据此放弃模糊匹配。
     """

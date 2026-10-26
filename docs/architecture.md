@@ -3,7 +3,7 @@
 > 版本 1.1 ｜ 面向开源发布 ｜ 2026-10
 > v1.1 的核心变化:**双语言分层** —— Go 做网关,Python 做解析;并新增
 > "智能体可自助接入新站点"的流水线。变更决策见 [`tech-selection.md`](tech-selection.md)
-> 第二部分(ADR-015 ~ ADR-021)。
+> 第二部分(ADR-015 ~ ADR-022)。
 
 ---
 
@@ -164,6 +164,30 @@ Go 网关 ──stdin──▶ {"id":"r1","op":"parse","shape":"object","media_t
 > `resolver.py` 是**参照实现**:Go 网关的行为以它为准,两边的行为差异由
 > `make parity` 与 CI 守住。
 
+### 3.5 两平面有意分歧
+
+两个平面读**同一份** `data/`,所以**语义**必须一致;但**传输层与安全姿态**上的差异是
+有意保留的 —— 主运行时是 Go 网关,Python 参照面/回落路径只在网关不可达时顶班。
+
+#### 有意的分歧
+
+| 事项 | Go 网关(主运行时) | Python 参照面 / 回落路径 | 为什么这样分 |
+|---|---|---|---|
+| **重定向** | 只跟随**同主机**重定向(`gateway/internal/upstream/upstream.go` 的 `sameHostRedirect`)。跨主机直接拒绝,错误文案是 `redirect to another host is not followed: … (the endpoint template must point at the final URL)`;同主机换端口也拒绝(端口只允许**随 scheme 一起**变,如 http→https) | `httpx.AsyncClient(..., follow_redirects=True)`,**无条件跟随** | **安全姿态**:不能让调用方借一个源端点去够它本不该够的地址。官方源把文件放在自己的 CDN 上时(OFAC 导出接口 302 到带签名的 S3 地址),端点模板要**指向最终地址**;签名地址写不进模板,那种源按"文件型源直连下载"处理(见 ADR-022) |
+| **HTTP/2** | 显式 `Transport.ForceAttemptHTTP2 = true`(ALPN 协商),个别上游 h2 有问题时用 `A_GATEWAY_HTTP2=0` 关掉 | HTTP/1.1 —— httpx 要用 h2 得额外装 `h2` 包,本项目不把它列为依赖 | 传输协议**不属于**信封/注册表的语义契约,不值得为它引入一个额外依赖 |
+
+#### 必须一致的语义
+
+| 契约 | 靠什么保证一致 |
+|---|---|
+| **信封形状与字段语义** | 同一份 `data/` + 同一套 `schema_version`(两平面当前都是 `1.2`);字段定义见 [`meta-schema.md`](meta-schema.md) |
+| **注册表**(源 / 端点 / 别名) | `make parity` 把两个平面从 `data/` 构建出的注册表逐项比对(忽略生成时间等易变字段),CI 守住 |
+| **错误类型口径** | 同名同义:`timeout` / `connect_error` / `read_error` / `upstream_error` / `upstream_not_json` / `response_too_large` / `stale` / `offline` / `budget_exceeded` / `not_found` / `contact_required` / `missing_param` —— **传输层失败也用这三个共用名字**(见 §4.3)。`parse_error` 目前只有 Go 侧会产生 —— Python 参照面解析不了正文时报的是 `upstream_not_json` |
+| **校验错误形状** | 两平面都返回 FastAPI 同形的 `{"detail":[{"type":…,"loc":[…],"msg":…,"input":…}]}` |
+
+> **给读者的话**:如果你看到一个"只在某个平面上出现"的行为 —— 先来这里对一下,
+> 而不是当成 bug。本节列的就是**登记过的**分歧;没列在这里的行为差异,才是真 bug。
+
 ---
 
 ## 4. 关键机制
@@ -211,8 +235,28 @@ Go 侧同理:用 `context.WithTimeout` 约束**整次请求**,不设客户端级
 }
 ```
 
-降级类型:`timeout` / `upstream_error` / `response_too_large` / `stale` / `offline` /
+降级类型:`timeout` / `connect_error` / `read_error` / `upstream_error` /
+`upstream_not_json` / `parse_error` / `response_too_large` / `stale` / `offline` /
 `budget_exceeded` / `not_found` / `contact_required` / `missing_param`。
+
+> `upstream_not_json` 是 1.3.0 起新增的:上游给了 HTML 错误页(状态码可能是 200),
+> 这**不是**空结果, 必须显式标降级。状态码 ≥400 且正文非 JSON 时,
+> `upstream_error`(根因)与 `upstream_not_json`(症状)两条都会报。
+
+**传输层失败有三个共用名字**:调用方是按 `errors[].type` 分支的("这是连不上,
+还是连上了但中途断了"),所以同一个失败类别在两个平面必须给同一个名字:
+
+| type | 含义 |
+|---|---|
+| `connect_error` | 域名解析失败 / 连接被拒 / 证书问题 —— 根本没连上 |
+| `read_error` | 连上了但中途断了(连接重置 / 服务端提前关闭 / EOF) |
+| `upstream_error` | 其余传输层失败;以及上游返回 HTTP ≥400(这一直就是这个名字) |
+
+Go 网关(`gateway/internal/server/resolver.go` 的 `upstreamErrorType()`)与 Python
+参照面(`python/src/a_source_gateway/resolver.py` 的 `_transport_error_type()`)逐条对齐,
+`python/tests/test_error_taxonomy.py` 守住这张词表不再外扩。
+**原始异常文本照旧放在 `errors[].message` 里** —— 各运行时的措辞不同,那是事实,不强行统一。
+`timeout` 仍是 `timeout`(两个平面早就是统一的)。
 
 **降级也是有效信息**:调用方知道该直连上游。这比抛 5xx 好 —— 信封形状恒定,
 Agent 侧只需写一套解析逻辑(ADR-013)。
@@ -253,10 +297,28 @@ Agent 侧只需写一套解析逻辑(ADR-013)。
 | `GET /v1/sources/{id}/endpoints/{eid}` | 端点 meta |
 | `POST /v1/query` | 执行查询 → 信封 |
 | `GET /v1/query?...` | 同上(查询参数形式) |
+| `POST /v1/search` | 搜索:一次请求扇出多个源 → **信封数组 + 汇总 meta** |
+
+> **`POST /v1/search` 是信封形状的唯一例外**:它一次返回多个源的结果,不是单个
+> `{meta, data, fields}`。顶层 `meta` 汇总这次扇出(`requested` / `ok` / `degraded` /
+> `failed` / `with_data`,其中 `requested = ok + degraded + failed`,三类互斥),
+> `results[]` 里每一项**各自是一个源的信封**(`source` / `endpoint` / `degraded` /
+> `cached` / `latency_ms` / `count` / `total` / `data` / `fields` / `errors`,
+> 降级时还有 `fallback`);`queries[i]` 与 `results[i]` 一一对应、顺序一致。
+>
+> **单个源失败不影响整次调用**:未知源 / 未知端点 / 上游超时都只写进那一条的 `errors`,
+> 整体仍返回 200。这与 `POST /v1/query` 遇未知源返回 404 **刻意不同** —— 搜索要的是
+> "一次看多个源",一个源坏了不该让整次调用失败。
+> 各源**并发**执行、各自一份 ≤500ms 预算,整体墙钟约等于最慢的那一条。
 
 ### MCP
 
-`list_sources` / `get_source_meta` / `describe_endpoint` / `query_source` / `get_meta_schema`。
+`list_sources` / `get_source_meta` / `describe_endpoint` / `query_source` /
+`search_sources` / `get_meta_schema`。
+
+其中 `search_sources` 对应 `POST /v1/search`:给一个关键词在多个源上并行查一遍,
+返回**紧凑版**结果(每个源给出 source/endpoint/count/total/degraded/errors,
+`data` 按 limit 截断)。
 
 推荐调用序:**先读元数据再查数**。`describe_endpoint` 会给出参数名、位置、类型、必填、
 正则、示例值,以及响应里列表与总数所在路径 —— 这些信息足以让调用方不猜字段。
