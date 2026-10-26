@@ -2346,6 +2346,74 @@
           "fields": [],
           "notes": "通用透传端点(官方入口直取);结构随官方文件而定, 建议先取该源的专用端点"
         }
+      },
+      {
+        "id": "news",
+        "name": "证监会要闻",
+        "method": "GET",
+        "url_template": "http://www.csrc.gov.cn/searchList/a1a078ee0bc54721ab6b148884c784a8?_isAgg=true&_isJson=true&_pageSize={size}&_template=index&page={page}",
+        "headers": {
+          "Referer": "http://www.csrc.gov.cn/",
+          "Accept": "application/json"
+        },
+        "page_size": 10,
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "每页条数",
+            "pattern": null,
+            "default": 10,
+            "example": 10
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "title",
+              "type": "string",
+              "desc": "标题"
+            },
+            {
+              "name": "content",
+              "type": "string",
+              "desc": "正文摘要"
+            },
+            {
+              "name": "memo",
+              "type": "string",
+              "desc": "摘要说明"
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "desc": "正文链接"
+            },
+            {
+              "name": "publishedTimeStr",
+              "type": "string",
+              "desc": "发布时间"
+            }
+          ],
+          "item_path": "data.results",
+          "total_field": "data.total",
+          "notes": "实测 total=3207 条(证监会要闻栏目);_isJson=true 是返回 JSON 的关键参数"
+        },
+        "cache_ttl_s": 3600
       }
     ],
     "中国基金业协会 私募公示": [
@@ -4910,7 +4978,8 @@
             "required": true,
             "type": "string",
             "example": "YOUR_DART_API_KEY",
-            "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖"
+            "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖",
+            "env": "A_GATEWAY_DART_API_KEY"
           },
           {
             "name": "bgn_de",
@@ -4967,7 +5036,8 @@
             "required": true,
             "type": "string",
             "example": "YOUR_DART_API_KEY",
-            "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖"
+            "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖",
+            "env": "A_GATEWAY_DART_API_KEY"
           },
           {
             "name": "corp_code",
@@ -5158,6 +5228,397 @@
         "cache_ttl_s": 86400
       }
     ],
+    "巨潮资讯网 证券代码清单": [
+      {
+        "id": "stock_list",
+        "name": "全市场证券代码清单",
+        "method": "GET",
+        "url_template": "http://www.cninfo.com.cn/new/data/szse_stock.json",
+        "headers": {
+          "Referer": "http://www.cninfo.com.cn/",
+          "Accept": "application/json"
+        },
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "code",
+              "type": "string",
+              "desc": "证券代码"
+            },
+            {
+              "name": "orgId",
+              "type": "string",
+              "desc": "机构 id(公告查询用)"
+            },
+            {
+              "name": "zwjc",
+              "type": "string",
+              "desc": "证券中文简称"
+            },
+            {
+              "name": "pinyin",
+              "type": "string",
+              "desc": "简称拼音"
+            },
+            {
+              "name": "category",
+              "type": "string",
+              "desc": "板块类别(A股等)"
+            }
+          ],
+          "item_path": "stockList",
+          "notes": "实测 6261 条(沪市 2473/深市 3104/北交所 251/含B股等其他 433);上游不提供总数"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "上海证券交易所 上市公司列表": [
+      {
+        "id": "stock_list",
+        "name": "沪市上市公司列表",
+        "method": "GET",
+        "url_template": "https://query.sse.com.cn/sseQuery/commonQuery.do?sqlId=COMMON_SSE_CP_GPJCTPZ_GPLB_GP_L&isPagination=true&pageHelp.pageSize={size}&pageHelp.pageNo={page}",
+        "headers": {
+          "Referer": "https://www.sse.com.cn/",
+          "Accept": "application/json"
+        },
+        "page_size": 25,
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "每页条数",
+            "pattern": null,
+            "default": 25,
+            "example": 25
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码(从 1 开始)",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "A_STOCK_CODE",
+              "type": "string",
+              "desc": "A股代码"
+            },
+            {
+              "name": "COMPANY_ABBR",
+              "type": "string",
+              "desc": "公司简称"
+            },
+            {
+              "name": "SEC_NAME_CN",
+              "type": "string",
+              "desc": "证券中文简称"
+            },
+            {
+              "name": "FULL_NAME",
+              "type": "string",
+              "desc": "公司全称"
+            },
+            {
+              "name": "LIST_DATE",
+              "type": "string",
+              "desc": "上市日期"
+            },
+            {
+              "name": "LIST_BOARD",
+              "type": "string",
+              "desc": "上市板块"
+            },
+            {
+              "name": "AREA_NAME_DESC",
+              "type": "string",
+              "desc": "所属地区"
+            },
+            {
+              "name": "STATE_CODE",
+              "type": "string",
+              "desc": "证券状态"
+            },
+            {
+              "name": "COMPANY_CODE",
+              "type": "string",
+              "desc": "公司代码"
+            }
+          ],
+          "item_path": "pageHelp.data",
+          "total_field": "pageHelp.total",
+          "notes": "实测 total=2520, pageCount=504(每页25);上游 TLS 握手偶发超时, 调用侧需带重试;Referer 必带"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "全国标准信息公共服务平台 国家标准": [
+      {
+        "id": "gb_list",
+        "name": "国家标准目录检索",
+        "method": "GET",
+        "url_template": "https://std.samr.gov.cn/gb/search/gbQueryPage?pageSize={size}&pageNumber={page}&searchText=",
+        "headers": {
+          "Referer": "https://std.samr.gov.cn/gb/search/gbAdvancedSearch",
+          "Accept": "application/json"
+        },
+        "page_size": 25,
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "每页条数",
+            "pattern": null,
+            "default": 25,
+            "example": 25
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "C_STD_CODE",
+              "type": "string",
+              "desc": "标准号"
+            },
+            {
+              "name": "C_C_NAME",
+              "type": "string",
+              "desc": "标准中文名称"
+            },
+            {
+              "name": "STD_NATURE",
+              "type": "string",
+              "desc": "标准性质(推荐性/强制性)"
+            },
+            {
+              "name": "ISSUE_DATE",
+              "type": "string",
+              "desc": "发布日期"
+            },
+            {
+              "name": "ACT_DATE",
+              "type": "string",
+              "desc": "实施日期"
+            },
+            {
+              "name": "STATE",
+              "type": "string",
+              "desc": "状态"
+            },
+            {
+              "name": "PROJECT_ID",
+              "type": "int",
+              "desc": "计划编号"
+            }
+          ],
+          "item_path": "rows",
+          "total_field": "total",
+          "notes": "实测 total=79826 项现行国家标准(GB)"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "中国政府网 政策文件库": [
+      {
+        "id": "policy_list",
+        "name": "国务院政策文件检索",
+        "method": "GET",
+        "url_template": "https://sousuo.www.gov.cn/search-gov/data?t=zhengcelibrary_gw&q={q}&timetype=timeqb&sort=score&sortType=1&searchfield=title&p={page}&n={size}",
+        "headers": {
+          "Referer": "https://sousuo.www.gov.cn/",
+          "Accept": "application/json"
+        },
+        "page_size": 25,
+        "params": [
+          {
+            "name": "q",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "desc": "标题关键词(留空=全部)",
+            "pattern": null,
+            "default": "",
+            "example": "数据"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "每页条数",
+            "pattern": null,
+            "default": 25,
+            "example": 25
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "title",
+              "type": "string",
+              "desc": "文件标题(关键词会带 <em> 高亮)"
+            },
+            {
+              "name": "pubtimeStr",
+              "type": "string",
+              "desc": "发布日期"
+            },
+            {
+              "name": "wenhao",
+              "type": "string",
+              "desc": "发文字号"
+            },
+            {
+              "name": "puborg",
+              "type": "string",
+              "desc": "发布机构"
+            },
+            {
+              "name": "fwzh",
+              "type": "string",
+              "desc": "发文字号全称"
+            },
+            {
+              "name": "pcode",
+              "type": "string",
+              "desc": "政策分类编码"
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "desc": "正文链接"
+            },
+            {
+              "name": "source",
+              "type": "string",
+              "desc": "来源"
+            }
+          ],
+          "item_path": "searchVO.listVO",
+          "total_field": "searchVO.totalCount",
+          "notes": "实测 国务院文件 totalCount=6223(部门文件库 t=zhengcelibrary_bm 为 12811)"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
+    "国家法律法规数据库": [
+      {
+        "id": "law_counts",
+        "name": "法规分类计数",
+        "method": "GET",
+        "url_template": "https://flk.npc.gov.cn/law-search/index/aggregateData?type=flfg",
+        "headers": {
+          "Referer": "https://flk.npc.gov.cn/",
+          "Accept": "application/json"
+        },
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "key",
+              "type": "string",
+              "desc": "法规类别(法律/行政法规/地方法规…)"
+            },
+            {
+              "name": "count",
+              "type": "int",
+              "desc": "该类别件数"
+            },
+            {
+              "name": "id",
+              "type": "int",
+              "desc": "类别 id"
+            }
+          ],
+          "item_path": "data.flflCount",
+          "notes": "实测 合计 17198 件(宪法1/法律302/行政法规605/监察法规2/地方法规15726/司法解释562);上游不提供单一总数, 故不声明 total_field"
+        },
+        "cache_ttl_s": 3600
+      },
+      {
+        "id": "recent_laws",
+        "name": "最新公布法规",
+        "method": "GET",
+        "url_template": "https://flk.npc.gov.cn/law-search/index/aggregateData?type=flfg",
+        "headers": {
+          "Referer": "https://flk.npc.gov.cn/",
+          "Accept": "application/json"
+        },
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "title",
+              "type": "string",
+              "desc": "法规名称"
+            },
+            {
+              "name": "gbrq",
+              "type": "string",
+              "desc": "公布日期"
+            },
+            {
+              "name": "flxz",
+              "type": "string",
+              "desc": "法律性质"
+            },
+            {
+              "name": "bbbs",
+              "type": "string",
+              "desc": "版本标识"
+            },
+            {
+              "name": "score",
+              "type": "number",
+              "desc": "相关度"
+            }
+          ],
+          "item_path": "data.xfsd",
+          "notes": "实测最新公布日期 2026-10-10(海南自由贸易港城市更新条例)"
+        },
+        "cache_ttl_s": 3600
+      }
+    ],
     "SEC Form D": [
       {
         "id": "form_d_filings",
@@ -5222,6 +5683,244 @@
           "notes": "实测 2026-10-01~2026-10-21: hits.total.value=4060, 命中 100 条/页; 官方入口 browse-edgar 是给人看的页面(对非浏览器 UA 403), 取数走 EDGAR 全文检索 API"
         },
         "cache_ttl_s": 1800
+      }
+    ],
+    "深圳证券交易所 A股列表": [
+      {
+        "id": "stock_list",
+        "name": "深市 A 股列表",
+        "method": "GET",
+        "url_template": "https://www.szse.cn/api/report/ShowReport/data?SHOWTYPE=JSON&CATALOGID=1110&TABKEY=tab1&PAGENO={page}&PAGESIZE=20",
+        "headers": {
+          "Referer": "https://www.szse.cn/market/product/stock/list/index.html",
+          "Accept": "application/json"
+        },
+        "params": [
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码(服务端固定每页 20 条)",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "agdm",
+              "type": "string",
+              "desc": "A股代码"
+            },
+            {
+              "name": "agjc",
+              "type": "string",
+              "desc": "A股简称(带 <a> 标签的 HTML 片段)"
+            },
+            {
+              "name": "agssrq",
+              "type": "string",
+              "desc": "A股上市日期"
+            },
+            {
+              "name": "agzgb",
+              "type": "string",
+              "desc": "A股总股本(股)"
+            },
+            {
+              "name": "agltgb",
+              "type": "string",
+              "desc": "A股流通股本(股)"
+            },
+            {
+              "name": "bk",
+              "type": "string",
+              "desc": "所属板块(主板/创业板)"
+            }
+          ],
+          "item_path": "0.data",
+          "total_field": "0.metadata.recordcount",
+          "notes": "实测 recordcount=2906, pagecount=146(每页固定 20 条);上游响应是顶层数组, item_path/total_field 用数字下标定位"
+        },
+        "cache_ttl_s": 86400
+      }
+    ],
+    "上海证券交易所 上市公司公告": [
+      {
+        "id": "announcements",
+        "name": "沪市上市公司公告",
+        "method": "GET",
+        "url_template": "https://query.sse.com.cn/security/stock/queryCompanyBulletinNew.do?isPagination=true&pageHelp.pageSize={size}&pageHelp.pageNo={page}&START_DATE={start_date}&END_DATE={end_date}&SECURITY_CODE=",
+        "headers": {
+          "Referer": "https://www.sse.com.cn/",
+          "Accept": "application/json"
+        },
+        "page_size": 25,
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "每页条数",
+            "pattern": null,
+            "default": 25,
+            "example": 25
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "desc": "公告起始日(YYYY-MM-DD);上游不带日期时返回 0 条, 必填",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-10-22"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "desc": "公告截止日(YYYY-MM-DD)",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-10-22"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "SECURITY_CODE",
+              "type": "string",
+              "desc": "证券代码"
+            },
+            {
+              "name": "SECURITY_NAME",
+              "type": "string",
+              "desc": "证券简称"
+            },
+            {
+              "name": "TITLE",
+              "type": "string",
+              "desc": "公告标题"
+            },
+            {
+              "name": "SSEDATE",
+              "type": "string",
+              "desc": "公告日期"
+            },
+            {
+              "name": "URL",
+              "type": "string",
+              "desc": "公告 PDF 路径"
+            },
+            {
+              "name": "BULLETIN_TYPE_DESC",
+              "type": "string",
+              "desc": "公告类别"
+            },
+            {
+              "name": "ORG_BULLETIN_ID",
+              "type": "string",
+              "desc": "公告 id"
+            }
+          ],
+          "item_path": "pageHelp.data",
+          "item_flatten": true,
+          "total_field": "pageHelp.total",
+          "notes": "实测 2026-10-22 单日 total=345, pageCount=115;上游把每条公告装在各自的数组里, 故声明 item_flatten 展平一层;上游 TLS 握手偶发超时, 调用侧需带重试"
+        },
+        "cache_ttl_s": 900
+      }
+    ],
+    "中国证监会 行政处罚决定": [
+      {
+        "id": "penalties",
+        "name": "行政处罚决定",
+        "method": "GET",
+        "url_template": "http://www.csrc.gov.cn/searchList/28de6b87eda140cb93de4dd10d11867d?_isAgg=true&_isJson=true&_pageSize={size}&_template=index&page={page}",
+        "headers": {
+          "Referer": "http://www.csrc.gov.cn/csrc/c101928/common_list.shtml",
+          "Accept": "application/json"
+        },
+        "page_size": 10,
+        "params": [
+          {
+            "name": "size",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "每页条数",
+            "pattern": null,
+            "default": 10,
+            "example": 10
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "int",
+            "required": false,
+            "desc": "页码",
+            "pattern": null,
+            "default": 1,
+            "example": 1
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "object",
+          "fields": [
+            {
+              "name": "title",
+              "type": "string",
+              "desc": "文书标题"
+            },
+            {
+              "name": "memo",
+              "type": "string",
+              "desc": "当事人"
+            },
+            {
+              "name": "content",
+              "type": "string",
+              "desc": "处罚正文"
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "desc": "正文链接"
+            },
+            {
+              "name": "publishedTimeStr",
+              "type": "string",
+              "desc": "发文时间"
+            },
+            {
+              "name": "subTitle",
+              "type": "string",
+              "desc": "副标题"
+            }
+          ],
+          "item_path": "data.results",
+          "total_field": "data.total",
+          "notes": "实测 total=2046 件(行政处罚栏目);channelId 由 /getLocalList?channelCode=c101928 取得;_isJson=true 是返回 JSON 的关键参数(缺了会回 HTML 页面)"
+        },
+        "cache_ttl_s": 3600
       }
     ]
   }

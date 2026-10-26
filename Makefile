@@ -16,7 +16,8 @@ SOURCE ?=
 .PHONY: help install dev test network-test lint type fmt validate bench bench-gateway run build clean \
         gateway-build gateway-test gateway-run \
         docker-build docker-run up down \
-        recon verify-source verify-all demo parity check
+        recon verify-source verify-all demo parity check \
+        docs docs-check
 
 help:  ## 显示所有可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -174,8 +175,15 @@ parity:  ## 校验 Go 与 Python 构建出的注册表一致
 	cd gateway && go run ./cmd/gateway registry-dump -o ../.parity/registry.go.json
 	@$(PY) -c "$$PARITY_PY" .parity/registry.python.json .parity/registry.go.json
 
+# ── 文档站 ─────────────────────────────────────────────────────────────
+docs:  ## 起本地文档站(带 /__gateway 代理, 调试台要用它)
+	$(PY) scripts/serve_docs.py
+
+docs-check:  ## 校验文档站(结构完整 / 内部链接可达 / 导航齐全)
+	$(PY) scripts/check_docs.py --strict
+
 # ── 全量检查 ──────────────────────────────────────────────────────────
-check: lint type test validate gateway-test parity  ## 提交前全量检查
+check: lint type test validate gateway-test parity docs-check  ## 提交前全量检查
 
 # ── 跨车道依赖 ────────────────────────────────────────────────────────
 # demo / verify-source / recon → scripts/ 下的工具链(scripts 车道)

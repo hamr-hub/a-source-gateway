@@ -50,7 +50,7 @@ def test_inventory_entries_are_wellformed(inventory):
 def test_registry_shape(registry):
     assert registry["count"] >= 90
     assert len(registry["families"]) >= 8
-    assert registry["schema_version"] == "1.0"
+    assert registry["schema_version"] == "1.1"
 
 
 def test_every_source_has_full_meta(registry):

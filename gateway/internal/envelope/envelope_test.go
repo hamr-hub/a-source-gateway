@@ -15,7 +15,7 @@ func TestEnvelopeJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"meta":{"request_id":"","trace_id":"","schema_version":"1.0","source":"crossref","endpoint":"works",` +
+	want := `{"meta":{"request_id":"","trace_id":"","schema_version":"1.1","source":"crossref","endpoint":"works",` +
 		`"parser":"","upstream":{"url":"","method":"GET","status":null,"latency_ms":0},"latency_ms":0,` +
 		`"budget_ms":0,"cached":false,"cache_age_s":0,"degraded":false,"offline":false,"count":2,` +
 		`"total":10,"truncated":false,"next_cursor":null,"rate_limit":{},"fallback":{},"errors":[]},` +

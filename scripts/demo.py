@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
                                            "message": text[:300]}]
         envelope = {
             "meta": {
-                "request_id": "direct", "schema_version": "1.0",
+                "request_id": "direct", "schema_version": "1.1",
                 "source": src["id"], "endpoint": ep.get("id"),
                 "upstream": {"url": url, "method": ep.get("method", "GET"),
                              "status": direct["status"], "latency_ms": direct["latency_ms"]},

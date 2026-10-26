@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>快速部署 · a-source-gateway 文档</title>
+<meta name="description" content="a-source-gateway 的四种部署方式:Docker Compose、systemd、Kubernetes、本地二进制。每种都给出可复制命令、配置变量、验证、回滚与排障。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="topbar">
+  <button class="icon-btn nav-toggle" id="nav-toggle" type="button" aria-label="打开目录" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+  <a class="brand" href="index.html">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0f6fb8"/>
+      <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round">
+        <path d="M8 11h6M8 21h6M18 16h6"/><path d="M14 11v10"/>
+      </g>
+      <circle cx="24" cy="16" r="2.6" fill="#ffffff"/>
+    </svg>
+    <span>a-source-gateway</span>
+    <span class="brand-sub">文档</span>
+  </a>
+  <span class="topbar-spacer"></span>
+  <div class="topbar-actions">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input class="search-input" id="search-input" type="search" placeholder="搜索文档" aria-label="搜索文档" autocomplete="off">
+      <span class="search-kbd">/</span>
+      <div class="search-results" id="search-results" hidden></div>
+    </div>
+    <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换主题"></button>
+    <a class="icon-btn" href="https://github.com/hamr-hub/a-source-gateway" aria-label="GitHub 仓库" title="GitHub 仓库">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 .5a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.2c-3.2.7-3.88-1.38-3.88-1.38-.53-1.34-1.29-1.7-1.29-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0024 12.5 11.5 11.5 0 0012 .5z"/>
+      </svg>
+    </a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav-group">
+      <div class="nav-group-title">开始</div>
+      <a class="nav-link" href="index.html">首页</a>
+      <a class="nav-link" href="quickstart.html">快速部署</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接口</div>
+      <a class="nav-link" href="api.html">API 参考</a>
+      <a class="nav-link" href="envelope.html">信封与降级</a>
+      <a class="nav-link" href="debug.html">API 调试台</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接入</div>
+      <a class="nav-link" href="mcp.html">MCP 集成</a>
+      <a class="nav-link" href="adding-source.html">加源指南</a>
+    </nav>
+  </aside>
+
+  <main class="content" id="main">
+    <div class="doc">
+
+      <h1>快速部署</h1>
+      <p class="lede">
+        a-source-gateway 是<strong>单容器双进程</strong>形态:Go 网关负责 HTTP 服务与调度,Python 解析 worker 负责内容与结构。
+        下面四种方式都给出<strong>可复制的命令</strong>、<strong>验证</strong>和<strong>回滚</strong>路径 —— 按场景挑一种,别混着来。
+      </p>
+
+      <div class="stats">
+        <div class="stat"><div class="stat-num">8848</div><div class="stat-label">默认监听端口</div></div>
+        <div class="stat"><div class="stat-num">500<span style="font-size:1rem">ms</span></div><div class="stat-label">单次调用硬预算</div></div>
+        <div class="stat"><div class="stat-num">2</div><div class="stat-label">k8s 默认副本数</div></div>
+        <div class="stat"><div class="stat-num">10001</div><div class="stat-label">容器运行 uid/gid</div></div>
+      </div>
+
+      <h2>选哪种部署方式</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>方式</th><th>场景</th><th>依据文件</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="badge info">Docker Compose</span></td><td>本机 / 单机 / 开发验证</td><td><code>docker-compose.yml</code></td></tr>
+            <tr><td><span class="badge ok">systemd</span></td><td>单台长期运行的服务器</td><td><code>deploy/systemd/a-source-gateway.service</code></td></tr>
+            <tr><td><span class="badge warn">Kubernetes</span></td><td>集群、多副本</td><td><code>deploy/k8s/</code></td></tr>
+            <tr><td><span class="badge">本地二进制</span></td><td>开发调试 / 没有 Docker 的环境</td><td><code>Makefile</code> 的 <code>gateway-run</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>先记住三件事</h2>
+      <div class="callout warn">
+        <div class="callout-title"><span class="callout-icon">!</span>改 <code>data/</code> 要重启;缓存不落盘;邮箱不是密钥</div>
+        <div class="callout-body">
+          <ol>
+            <li>
+              <strong>改了 <code>data/</code> 下的数据文件必须重启。</strong>注册表在进程启动时从 <code>data/</code> 构建。
+              Compose 场景要重新 <code>build</code>(镜像里的 <code>data/</code> 是烤进去的);systemd / k8s 场景重启即可(数据文件随包安装)。
+            </li>
+            <li>
+              <strong>缓存是进程内的</strong>(in-process):不落盘、不跨副本共享。重启 = 冷缓存;k8s 里两个副本各有一份。
+              想持久化缓存是改网关实现,不是加 volume。
+            </li>
+            <li>
+              <strong><code>A_GATEWAY_CONTACT</code> 是联系邮箱、不是密钥</strong>,但强烈建议设成真实邮箱。
+              它写进 <code>User-Agent</code>,SEC、OpenAlex 等上游据此识别调用方,<strong>不带邮箱 SEC 直接 403</strong>。
+            </li>
+          </ol>
+        </div>
+      </div>
+
+      <h2>Docker Compose</h2>
+      <p>本机 / 单机 / 开发验证的首选。服务定义在 <code>docker-compose.yml</code>,宿主机端口用 <code>PORT</code> 覆盖(容器内永远是 8848)。</p>
+
+      <h3>安装与配置</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>git clone https://github.com/hamr-hub/a-source-gateway.git
+cd a-source-gateway
+cp .env.example .env
+$EDITOR .env          # 至少把 A_GATEWAY_CONTACT 改成你的真实邮箱
+
+make up                # = docker compose up -d --build
+</code></pre>
+      </div>
+      <p>也可以不建 <code>.env</code>,直接在命令前面带环境变量:</p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>A_GATEWAY_CONTACT=you@example.com docker compose up -d
+</code></pre>
+      </div>
+
+      <h3>验证</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>docker compose ps                       # STATUS 应为 healthy
+docker compose logs -f gateway           # 看日志
+curl -s http://127.0.0.1:8848/livez  | python3 -m json.tool
+curl -s http://127.0.0.1:8848/readyz | python3 -m json.tool
+curl -s "http://127.0.0.1:8848/v1/sources?q=制裁" | python3 -m json.tool
+</code></pre>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">console</span></div>
+        <pre><code>$ curl -s http://127.0.0.1:8848/livez | python3 -m json.tool
+{
+    "ok": true,
+    "uptime_s": 500.4
+}
+$ curl -s http://127.0.0.1:8848/readyz | python3 -m json.tool
+{
+    "ok": true,
+    "sources": 117,
+    "offline": false
+}
+</code></pre>
+      </div>
+      <p>
+        <code>/livez</code> = 进程活着;<code>/readyz</code> = 注册表已加载、能接流量(<code>sources</code> 为 0 时返回 <strong>503</strong>);<code>/healthz</code> = 健康。
+      </p>
+
+      <h3>回滚</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># 1) 回到上一个能用的 git 版本重新 build
+docker compose down
+git checkout &lt;上一个好版本&gt;
+docker compose up -d --build
+
+# 2) 只回滚配置(改错了 .env)
+docker compose down &amp;&amp; $EDITOR .env &amp;&amp; docker compose up -d
+</code></pre>
+      </div>
+      <p>镜像本身没有历史版本标签(<code>a-source-gateway:local</code> 是本地构建),回滚就是回到上一个能用的 git 版本重新 build。</p>
+
+      <div class="callout info">
+        <div class="callout-title"><span class="callout-icon">i</span>镜像里还有一次性 CLI</div>
+        <div class="callout-body">
+          <p>
+            镜像内的 Python CLI 是 <code>/usr/local/bin/a-source-gateway-cli</code>(<code>list</code> / <code>validate</code> / <code>bench</code> / <code>show</code>)。
+            <code>docker-compose.yml</code> 里的 <code>tools</code> 服务默认是<strong>整段注释掉的</strong>,要用之前先把它打开:
+          </p>
+          <div class="code-block" style="margin-bottom:0">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>docker compose --profile tools run --rm tools list
+docker compose --profile tools run --rm tools validate
+</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <h2>systemd</h2>
+      <p>
+        单台长期运行的服务器。单元文件在 <code>deploy/systemd/a-source-gateway.service</code>,
+        运行参数样例在 <code>deploy/systemd/env.example</code>。
+      </p>
+
+      <h3>安装</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># Python 解析面(网关会拉起 python3 -m a_source_gateway.parser_worker)
+# 系统 Python 3.10+ 即可;用发行包或 pip 装都行:
+pip3 install a-source-gateway        # 装进系统 Python
+# 或从源码装(仓库根):
+pip3 install .
+
+# 二进制:本地构建,产物在 bin/a-source-gateway
+make gateway-build
+sudo install -m 0755 bin/a-source-gateway /usr/local/bin/a-source-gateway
+
+# 服务账号与目录
+sudo useradd --system --home-dir /var/lib/a-source-gateway --shell /usr/sbin/nologin a-source-gateway
+sudo install -d -m 0750 -o root -g a-source-gateway /etc/a-source-gateway
+sudo install -d -m 0750 -o a-source-gateway -g a-source-gateway /var/lib/a-source-gateway
+
+# 事实源(data/):Go 网关从工作目录和可执行文件目录逐级向上找 data/,
+# 装到 /var/lib/a-source-gateway/data 就正好落在 systemd 的 WorkingDirectory 下。
+sudo install -d -m 0750 -o a-source-gateway -g a-source-gateway /var/lib/a-source-gateway/data
+sudo install -m 0640 -o a-source-gateway -g a-source-gateway data/source_inventory.csv \
+     /var/lib/a-source-gateway/data/
+sudo install -m 0640 -o a-source-gateway -g a-source-gateway data/source_inventory_cn.csv \
+     /var/lib/a-source-gateway/data/
+sudo install -m 0640 -o a-source-gateway -g a-source-gateway data/endpoints.json \
+     /var/lib/a-source-gateway/data/
+sudo install -m 0640 -o a-source-gateway -g a-source-gateway data/aliases.json \
+     /var/lib/a-source-gateway/data/
+
+# 单元文件
+sudo install -m 0644 deploy/systemd/a-source-gateway.service /etc/systemd/system/a-source-gateway.service
+sudo systemctl daemon-reload
+</code></pre>
+      </div>
+      <p>
+        Python 包原本也装出一个叫 <code>a-source-gateway</code> 的命令,和 Go 二进制同名 ——
+        所以<strong>先装 Python、再装 Go 二进制</strong>,让 Go 拿到这个名字,单元文件的 <code>ExecStart=/usr/local/bin/a-source-gateway</code> 才是网关本体。
+        网关只需要 Python <em>模块</em>可导入(它拉起 <code>python3 -m a_source_gateway.parser_worker</code>),被覆盖的那个 CLI 命令不影响运行。
+      </p>
+      <p>
+        想跳过 Python:装 <code>A_GATEWAY_PARSER=go</code>(见下文配置),这时只需要 Go 二进制。
+        更新事实源:重新 <code>install</code> 那些 <code>data/</code> 文件,然后 <code>systemctl restart</code>。
+      </p>
+
+      <h3>配置</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>sudo install -m 0640 -o root -g a-source-gateway \
+     deploy/systemd/env.example /etc/a-source-gateway/env
+sudo editor /etc/a-source-gateway/env
+</code></pre>
+      </div>
+      <p><code>EnvironmentFile=-/etc/a-source-gateway/env</code> 前面的 <code>-</code> 表示文件缺失也不报错 —— 没配也能起,全部走默认值。</p>
+
+      <h3>启动与验证</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>sudo systemctl enable --now a-source-gateway
+sudo systemctl status a-source-gateway
+sudo journalctl -u a-source-gateway -f
+</code></pre>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>systemctl is-active a-source-gateway     # active
+curl -s http://127.0.0.1:8848/livez
+curl -s http://127.0.0.1:8848/readyz
+</code></pre>
+      </div>
+
+      <h3>回滚</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># 换回旧二进制
+sudo install -m 0755 /path/to/previous/a-source-gateway /usr/local/bin/a-source-gateway
+sudo systemctl restart a-source-gateway
+
+# 配置改错了
+sudo cp /etc/a-source-gateway/env.bak /etc/a-source-gateway/env
+sudo systemctl restart a-source-gateway
+</code></pre>
+      </div>
+      <p>旧的二进制要自己留一份 —— systemd 单元不会自动保留上一个版本。</p>
+
+      <h2>Kubernetes</h2>
+      <p>
+        集群与多副本。清单在 <code>deploy/k8s/</code>,apply 顺序由 <code>deploy/k8s/kustomization.yaml</code> 的 <code>resources</code> 列表决定:
+        <strong>ConfigMap → Deployment → Service</strong>(Service 放最后,避免流量打到还不存在的选择器上)。
+      </p>
+
+      <h3>部署</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>kubectl create namespace a-source-gateway          # 一次
+kubectl apply -k deploy/k8s/                              # ConfigMap → Deployment → Service
+</code></pre>
+      </div>
+      <p>
+        <code>deploy/k8s/configmap.yaml</code> 里的 <code>A_GATEWAY_CONTACT</code> 是占位值 <code>you@example.com</code>,
+        换成真实邮箱后重新 apply,并重启 Deployment 让新的环境变量生效:
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>kubectl apply -k deploy/k8s/
+kubectl -n a-source-gateway rollout restart deployment/a-source-gateway
+</code></pre>
+      </div>
+      <p>
+        凭据单独建、不进仓库(形状见 <code>deploy/k8s/secret.example.yaml</code>,整份是注释、不生效):
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>kubectl -n a-source-gateway create secret generic a-source-gateway-secrets \
+  --from-literal=A_GATEWAY_&lt;某源&gt;_KEY='&lt;value&gt;'
+</code></pre>
+      </div>
+      <p>然后放开 <code>deploy/k8s/deployment.yaml</code> 里 <code>secretRef</code> 那段注释。</p>
+
+      <h3>验证</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>kubectl -n a-source-gateway rollout status deployment/a-source-gateway
+kubectl -n a-source-gateway get pods -o wide
+kubectl -n a-source-gateway port-forward svc/a-source-gateway 8848:8848
+</code></pre>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>curl -s http://127.0.0.1:8848/livez
+curl -s http://127.0.0.1:8848/readyz
+</code></pre>
+      </div>
+      <p>
+        Service 是 <code>ClusterIP</code>(只暴露集群内),对外暴露交给 Ingress / Gateway,不要直接给公网。
+        默认副本数 2,滚动策略 <code>maxUnavailable: 0</code> / <code>maxSurge: 1</code>,更新期间不会掉到 0 副本;
+        <code>preStop</code> 里的 <code>sleep 5</code> 让 Pod 先从 Endpoints 摘掉再收 SIGTERM,在途请求不会被打断。
+      </p>
+
+      <h3>回滚</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># 回滚到上一个 ReplicaSet
+kubectl -n a-source-gateway rollout undo deployment/a-source-gateway
+kubectl -n a-source-gateway rollout history deployment/a-source-gateway
+
+# 镜像回滚(改完重新 build / push 后)
+kubectl -n a-source-gateway set image deployment/a-source-gateway \
+  gateway=ghcr.io/hamr-hub/a-source-gateway:&lt;上一个可用 tag&gt;
+</code></pre>
+      </div>
+
+      <h2>本地二进制</h2>
+      <p>开发调试用,不需要 Docker。Go 网关是主运行时;Python 那条是参照实现,两边读同一份 <code>data/</code>。</p>
+
+      <h3>跑 Go 网关</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>make gateway-run            # = make gateway-build &amp;&amp; ./bin/a-source-gateway
+make gateway-run PORT=9000   # 换端口
+</code></pre>
+      </div>
+      <p>
+        默认监听 <code>127.0.0.1:8848</code>。<code>make gateway-run</code> 会先编译出 <code>bin/a-source-gateway</code>,再前台启动它。
+      </p>
+
+      <h3>跑 Python 参照实现</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>make install                # pip install -e .
+make run                    # = a-source-gateway serve(uvicorn)
+make run PORT=9000
+</code></pre>
+      </div>
+      <p>仓库里的 <code>make parity</code> 会比对 Go 与 Python 从同一份 <code>data/</code> 构建出的注册表是否一致。</p>
+
+      <h3>验证与回滚</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>curl -s http://127.0.0.1:8848/livez
+curl -s http://127.0.0.1:8848/readyz
+</code></pre>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># 部署前先留一份上一版二进制
+cp bin/a-source-gateway bin/a-source-gateway.prev
+
+# 出问题后:换回旧二进制再启动
+cp bin/a-source-gateway.prev bin/a-source-gateway
+./bin/a-source-gateway
+
+# 或者换回上一个 git 版本重新编译
+git checkout &lt;上一个好版本&gt;
+make gateway-build
+</code></pre>
+      </div>
+
+      <h2>配置变量</h2>
+      <p>
+        全部走环境变量，<strong>每个变量都有默认值</strong>（下面列的是常用的几个，完整清单见 <code>gateway/internal/config/config.go</code>）。宿主机端口由 <code>PORT</code> 控制(仅 Docker Compose),容器内监听端口永远是 8848。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>变量</th><th>默认</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>PORT</code></td><td><code>8848</code></td><td>宿主机端口(仅 Docker Compose)</td></tr>
+            <tr><td><code>A_GATEWAY_HOST</code></td><td><code>127.0.0.1</code></td><td>监听地址;容器内必须 <code>0.0.0.0</code>,否则外部访问不到</td></tr>
+            <tr><td><code>A_GATEWAY_PORT</code></td><td><code>8848</code></td><td>监听端口</td></tr>
+            <tr><td><code>A_GATEWAY_CONTACT</code></td><td>空</td><td>联系邮箱,写进 User-Agent(<strong>不是密钥</strong>);不带邮箱 SEC 直接 403</td></tr>
+            <tr><td><code>A_GATEWAY_BUDGET_MS</code></td><td><code>500</code></td><td>单次调用总预算</td></tr>
+            <tr><td><code>A_GATEWAY_UPSTREAM_BUDGET_MS</code></td><td><code>400</code></td><td>留给上游请求的预算</td></tr>
+            <tr><td><code>A_GATEWAY_RESERVE_MS</code></td><td><code>100</code></td><td>留给解析与封装的余量</td></tr>
+            <tr><td><code>A_GATEWAY_CACHE_ENTRIES</code></td><td><code>512</code></td><td>进程内缓存条目上限</td></tr>
+            <tr><td><code>A_GATEWAY_CACHE_BYTES</code></td><td><code>33554432</code></td><td>进程内缓存字节上限</td></tr>
+            <tr><td><code>A_GATEWAY_CACHE_TTL_S</code></td><td><code>900</code></td><td>缓存 TTL(秒)</td></tr>
+            <tr><td><code>A_GATEWAY_PREWARM</code></td><td><code>1</code></td><td>启动预热</td></tr>
+            <tr><td><code>A_GATEWAY_PARSER</code></td><td><code>auto</code></td><td><code>auto</code> / <code>python</code> / <code>go</code>;<code>go</code> = 纯 Go,不拉起 Python worker</td></tr>
+            <tr><td><code>A_GATEWAY_OFFLINE</code></td><td><code>0</code></td><td>离线模式:不发网络请求,只给元数据与已缓存数据</td></tr>
+            <tr><td><code>A_GATEWAY_DATA_DIR</code></td><td>容器内 <code>/app/data</code></td><td>事实源目录;不设则用包内自带的一份</td></tr>
+            <tr><td><code>A_GATEWAY_URL</code></td><td><code>http://127.0.0.1:8848</code></td><td>MCP server 转发给 Go 网关的地址(见 <a href="mcp.html">MCP 集成</a>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>镜像里有什么</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>路径</th><th>是什么</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/usr/local/bin/a-source-gateway</code></td><td>Go 网关(容器 <code>ENTRYPOINT</code>)</td></tr>
+            <tr><td><code>/usr/local/bin/a-source-gateway-cli</code></td><td>Python CLI(<code>list</code> / <code>validate</code> / <code>bench</code> / <code>show</code>)</td></tr>
+            <tr><td><code>/usr/local/bin/healthcheck.py</code></td><td>容器健康检查(打 <code>/livez</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout info">
+        <div class="callout-title"><span class="callout-icon">i</span>为什么有两个同名 CLI</div>
+        <div class="callout-body">
+          <p>
+            Python 包原本也装出一个叫 <code>a-source-gateway</code> 的命令,会和 Go 二进制撞名,
+            所以镜像里把它改名成了 <code>a-source-gateway-cli</code>。镜像以非 root 运行(uid/gid 10001),和 k8s 的 <code>runAsUser: 10001</code> 对齐。
+          </p>
+        </div>
+      </div>
+
+      <h2>排障</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>症状</th><th>先查</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/livez</code> 不通</td><td><code>docker compose logs gateway</code> / <code>journalctl -u a-source-gateway</code>;容器起不来多半是数据文件没找到</td></tr>
+            <tr><td><code>/readyz</code> 报 sources 为 0</td><td><code>data/</code> 没进镜像 → 重新 <code>build</code>;或 <code>A_GATEWAY_DATA_DIR</code> 指错了</td></tr>
+            <tr><td>上游 403</td><td><code>A_GATEWAY_CONTACT</code> 没设或不是有效邮箱</td></tr>
+            <tr><td>响应带 <code>degraded</code></td><td>看 <code>meta.errors[]</code> 与 <code>meta.fallback.upstream_url</code>,里面直接写了原因和下一步</td></tr>
+            <tr><td>超时 / <code>budget_exceeded</code></td><td>端点 <code>budget_ms</code> 与上游实际延迟;必要时调小 <code>page_size</code></td></tr>
+            <tr><td>Python worker 起不来</td><td><code>A_GATEWAY_PARSER=go</code> 可以先顶上(纯 Go 解析);<code>which python3</code>、包是否装在系统 Python 里</td></tr>
+            <tr><td>改了 <code>data/</code> 没生效</td><td>Compose 要重新 <code>make up</code>(= <code>docker compose up -d --build</code>);systemd / k8s 重启即可</td></tr>
+            <tr><td>容器起不来、报找不到数据文件</td><td>systemd 场景检查 <code>WorkingDirectory=/var/lib/a-source-gateway</code> 下有没有 <code>data/</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="margin-top:18px">
+        装好之后,下一步是 <a href="api.html">API 参考</a>;要让 AI 智能体直接用它,看 <a href="mcp.html">MCP 集成</a>。
+      </p>
+
+    </div>
+
+    <nav class="pager" id="pager"></nav>
+
+    <footer class="page-footer">
+      <span>a-source-gateway 文档 · MIT License</span>
+      <span><a href="https://github.com/hamr-hub/a-source-gateway">GitHub 仓库</a> · <a href="index.html">回到首页</a></span>
+    </footer>
+  </main>
+
+  <nav class="toc" id="toc"></nav>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

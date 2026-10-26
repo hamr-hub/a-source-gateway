@@ -38,9 +38,12 @@ type Spec struct {
 	ItemPath   string   `json:"item_path"`
 	TotalField string   `json:"total_field"`
 	ItemShape  string   `json:"item_shape"`
-	Limit      int      `json:"limit"`
-	Fields     []string `json:"fields"`
-	MaxRows    int      `json:"max_rows"`
+	// ItemFlatten flattens one level when the located list holds lists
+	// (e.g. the SSE bulletin index nests each record in its own array).
+	ItemFlatten bool `json:"item_flatten"`
+	Limit       int  `json:"limit"`
+	Fields      []string `json:"fields"`
+	MaxRows     int      `json:"max_rows"`
 	// TraceID correlates the parse with the gateway request. It is not part
 	// of the "spec" object of the protocol; the Python engine sends it as an
 	// extra top level field of the request.
@@ -218,8 +221,10 @@ func parseJSONL(ctx context.Context, body string) ([]any, error) {
 
 // Extract locates the item list and the total inside a decoded payload.
 //
-// It mirrors the first half of Resolver._project. total_field supports
-// numeric list indices ("0.total"), item_path only supports object keys.
+// It mirrors the first half of Resolver._project. Both item_path and
+// total_field accept numeric list indices ("0.total"): a top level array
+// payload is located like an object payload, so a declared item_path is
+// never silently ignored.
 func Extract(payload any, spec Spec) (any, *int) {
 	var total *int
 	if spec.TotalField != "" {
@@ -236,12 +241,16 @@ func Extract(payload any, spec Spec) (any, *int) {
 			data = obj.Values()
 		}
 	case spec.ItemPath != "":
-		if obj, ok := payload.(*Object); ok {
-			if node, ok := lookupItemPath(obj, spec.ItemPath); ok && node != nil {
-				data = node
-			} else {
-				data = []any{}
-			}
+		if node, ok := lookupTotalPath(payload, spec.ItemPath); ok && node != nil {
+			data = node
+		} else if arr, isArr := payload.([]any); isArr && !numericHead(spec.ItemPath) {
+			// 顶层是数组且路径首段不是数字: 保持整个数组(与 Python 引擎一致)
+			data = arr
+		} else {
+			data = []any{}
+		}
+		if spec.ItemFlatten {
+			data = flattenOneLevel(data)
 		}
 	}
 
@@ -357,20 +366,35 @@ func lookupTotalPath(node any, path string) (any, bool) {
 	return node, true
 }
 
-func lookupItemPath(node any, path string) (any, bool) {
-	root := node
-	for _, part := range strings.Split(path, ".") {
-		obj, ok := node.(*Object)
-		if !ok {
-			return lookupLiteralKey(root, path)
-		}
-		v, ok := obj.Get(part)
-		if !ok {
-			return lookupLiteralKey(root, path)
-		}
-		node = v
+// numericHead reports whether the first segment of a dotted path is an index.
+func numericHead(path string) bool {
+	head := path
+	if i := strings.IndexByte(path, '.'); i >= 0 {
+		head = path[:i]
 	}
-	return node, true
+	_, err := parseDigits(head)
+	return err == nil
+}
+
+// flattenOneLevel flattens a list of lists into a single list. It is a
+// no-op for anything else, so a wrong guess never corrupts the payload.
+func flattenOneLevel(data any) any {
+	list, ok := data.([]any)
+	if !ok || len(list) == 0 {
+		return data
+	}
+	if _, isList := list[0].([]any); !isList {
+		return data
+	}
+	flat := make([]any, 0, len(list))
+	for _, sub := range list {
+		if sl, ok := sub.([]any); ok {
+			flat = append(flat, sl...)
+		} else {
+			flat = append(flat, sub)
+		}
+	}
+	return flat
 }
 
 func parseDigits(s string) (int, error) {

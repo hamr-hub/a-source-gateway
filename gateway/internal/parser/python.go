@@ -170,12 +170,13 @@ func (e *PythonEngine) Parse(ctx context.Context, shape, mediaType string, body 
 		"body_b64":   encoded,
 		"trace_id":   spec.TraceID,
 		"spec": map[string]any{
-			"item_path":   spec.ItemPath,
-			"total_field": spec.TotalField,
-			"item_shape":  spec.ItemShape,
-			"limit":       spec.Limit,
-			"fields":      spec.Fields,
-			"max_rows":    spec.MaxRows,
+			"item_path":    spec.ItemPath,
+			"total_field":  spec.TotalField,
+			"item_shape":   spec.ItemShape,
+			"item_flatten": spec.ItemFlatten,
+			"limit":        spec.Limit,
+			"fields":       spec.Fields,
+			"max_rows":     spec.MaxRows,
 		},
 	}
 	obj, err := e.roundTrip(ctx, req)

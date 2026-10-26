@@ -354,3 +354,61 @@ func TestMarshalIndentMatchesPythonLayout(t *testing.T) {
 		t.Errorf("indent =\n%s\nwant\n%s", got, want)
 	}
 }
+
+// A top level array payload must still be located by item_path: the SZSE list
+// endpoint answers [{"metadata":…,"data":[…]}], so "0.data" is the real path.
+func TestExtractTopLevelArrayWithNumericItemPath(t *testing.T) {
+	raw := []byte(`[{"metadata":{"recordcount":2906},"data":[{"agdm":"000001"},{"agdm":"000002"}],"error":null}]`)
+	v, err := UnmarshalOrdered(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, total := Extract(v, Spec{ItemPath: "0.data", TotalField: "0.metadata.recordcount"})
+	if total == nil || *total != 2906 {
+		t.Fatalf("total = %v, want 2906", total)
+	}
+	list, ok := data.([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("data = %#v", data)
+	}
+}
+
+// A top level array with a non numeric item_path keeps the whole array:
+// that is the long standing behaviour and must not turn into an empty list.
+func TestExtractTopLevelArrayWithObjectItemPathKeepsWholePayload(t *testing.T) {
+	raw := []byte(`[{"id":"W1"},{"id":"W2"}]`)
+	v, err := UnmarshalOrdered(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := Extract(v, Spec{ItemPath: "items"})
+	list, ok := data.([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("data = %#v", data)
+	}
+}
+
+// item_flatten flattens one level of a list of lists (the SSE bulletin index
+// nests every record in its own array).
+func TestExtractFlattensNestedList(t *testing.T) {
+	raw := []byte(`{"pageHelp":{"total":2,"data":[[{"TITLE":"a"}],[{"TITLE":"b"}]]}}`)
+	v, err := UnmarshalOrdered(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, total := Extract(v, Spec{ItemPath: "pageHelp.data", TotalField: "pageHelp.total", ItemFlatten: true})
+	if total == nil || *total != 2 {
+		t.Fatalf("total = %v, want 2", total)
+	}
+	list, ok := data.([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("data = %#v", data)
+	}
+	first, ok := list[0].(*Object)
+	if !ok {
+		t.Fatalf("first item = %#v", list[0])
+	}
+	if v, _ := first.Get("TITLE"); v != "a" {
+		t.Fatalf("TITLE = %v, want a", v)
+	}
+}

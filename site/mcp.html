@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP 集成 · a-source-gateway 文档</title>
+<meta name="description" content="a-source-gateway 的 MCP server:5 个工具、客户端接入配置、A_GATEWAY_URL 与两平面回落语义(meta.gateway)、排障。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="topbar">
+  <button class="icon-btn nav-toggle" id="nav-toggle" type="button" aria-label="打开目录" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+  <a class="brand" href="index.html">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0f6fb8"/>
+      <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round">
+        <path d="M8 11h6M8 21h6M18 16h6"/><path d="M14 11v10"/>
+      </g>
+      <circle cx="24" cy="16" r="2.6" fill="#ffffff"/>
+    </svg>
+    <span>a-source-gateway</span>
+    <span class="brand-sub">文档</span>
+  </a>
+  <span class="topbar-spacer"></span>
+  <div class="topbar-actions">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input class="search-input" id="search-input" type="search" placeholder="搜索文档" aria-label="搜索文档" autocomplete="off">
+      <span class="search-kbd">/</span>
+      <div class="search-results" id="search-results" hidden></div>
+    </div>
+    <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换主题"></button>
+    <a class="icon-btn" href="https://github.com/hamr-hub/a-source-gateway" aria-label="GitHub 仓库" title="GitHub 仓库">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 .5a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.2c-3.2.7-3.88-1.38-3.88-1.38-.53-1.34-1.29-1.7-1.29-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0024 12.5 11.5 11.5 0 0012 .5z"/>
+      </svg>
+    </a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav-group">
+      <div class="nav-group-title">开始</div>
+      <a class="nav-link" href="index.html">首页</a>
+      <a class="nav-link" href="quickstart.html">快速部署</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接口</div>
+      <a class="nav-link" href="api.html">API 参考</a>
+      <a class="nav-link" href="envelope.html">信封与降级</a>
+      <a class="nav-link" href="debug.html">API 调试台</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接入</div>
+      <a class="nav-link" href="mcp.html">MCP 集成</a>
+      <a class="nav-link" href="adding-source.html">加源指南</a>
+    </nav>
+  </aside>
+
+  <main class="content" id="main">
+    <div class="doc">
+
+      <h1>MCP 集成</h1>
+      <p class="lede">
+        MCP server 把网关的 5 个核心能力暴露成工具,让 AI 智能体用"先读元数据、再取数"的方式查 A 类数据源。
+        工具调用默认<strong>转发给 Go 网关</strong>,网关不可达时才回落进程内 Python resolver ——
+        回落是<strong>可观测的</strong>,结果里的 <code>meta.gateway</code> 会写明走的是哪条平面。
+      </p>
+
+      <div class="stats">
+        <div class="stat"><div class="stat-num">5</div><div class="stat-label">MCP 工具</div></div>
+        <div class="stat"><div class="stat-num">2</div><div class="stat-label">工作平面(Go / Python)</div></div>
+        <div class="stat"><div class="stat-num">≤500<span style="font-size:1rem">ms</span></div><div class="stat-label">单次调用硬预算</div></div>
+        <div class="stat"><div class="stat-num">stderr</div><div class="stat-label">日志通道</div></div>
+      </div>
+
+      <h2>两平面架构</h2>
+      <p>
+        网关本身是<strong>Go 做传输与调度、Python 做解析</strong>的双平面。网关不可达时,MCP server 会在自己的进程里建一个 Python resolver,
+        让 MCP 端单独也能用 —— 但这条路径只用于兜底,正常情况下所有查询都走 Go 网关,保证"查询"只有一份实现。
+      </p>
+      <div class="card-grid">
+        <a class="card" href="quickstart.html">
+          <div class="card-title">先有网关</div>
+          <div class="card-desc">MCP server 只是网关的客户端。先按快速部署把 Go 网关跑起来,工具调用才有完整的元数据与缓存。</div>
+        </a>
+        <a class="card" href="envelope.html">
+          <div class="card-title">返回的是信封</div>
+          <div class="card-desc">所有工具都返回 <code>{meta, data, fields}</code>,与 HTTP API 一致。降级语义见「信封与降级」。</div>
+        </a>
+        <a class="card" href="api.html">
+          <div class="card-title">一一对应 HTTP 路由</div>
+          <div class="card-desc">每个工具都映射到一个网关路由,想看完整参数与错误码,直接查 API 参考。</div>
+        </a>
+        <a class="card" href="quickstart.html#配置变量">
+          <div class="card-title">两处要配</div>
+          <div class="card-desc">网关侧配 <code>A_GATEWAY_CONTACT</code>;MCP 侧配 <code>A_GATEWAY_CONTACT</code> 与 <code>A_GATEWAY_URL</code>。</div>
+        </a>
+      </div>
+
+      <h2>五个工具</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>工具</th><th>作用</th><th>必填入参</th><th>对应 HTTP 路由</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>list_sources</code></td><td>列源(可按分类/关键词过滤)</td><td>无</td><td><span class="method get">GET</span> <code>/v1/sources</code></td></tr>
+            <tr><td><code>get_source_meta</code></td><td>取单个源的完整 meta</td><td><code>source</code></td><td><span class="method get">GET</span> <code>/v1/sources/{source_id}</code></td></tr>
+            <tr><td><code>describe_endpoint</code></td><td>取端点的请求/响应结构</td><td><code>source</code>、<code>endpoint</code></td><td><span class="method get">GET</span> <code>/v1/sources/{id}/endpoints/{eid}</code></td></tr>
+            <tr><td><code>query_source</code></td><td>执行查询,返回信封</td><td><code>source</code>、<code>endpoint</code></td><td><span class="method post">POST</span> <code>/v1/query</code></td></tr>
+            <tr><td><code>get_meta_schema</code></td><td>取网关自身的 meta 规范</td><td>无</td><td><span class="method get">GET</span> <code>/v1/schema</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:18px">
+        推荐用法是 <code>list_sources</code> 定位源 → <code>get_source_meta</code> 看限速与合规 → <code>describe_endpoint</code> 看参数 →
+        <code>query_source</code> 取数。服务给客户端的 instructions 里也是这么写的。
+      </p>
+
+      <h3>list_sources —— 列出 A 类数据源</h3>
+      <p>按分类或关键词列出可用数据源(轻量投影,不含端点详情)。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>入参</th><th>类型</th><th>默认</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>family</code></td><td>string</td><td>空</td><td>分类关键词,如 <code>制裁</code></td></tr>
+            <tr><td><code>q</code></td><td>string</td><td>空</td><td>关键词,搜名称/描述/机构/国别</td></tr>
+            <tr><td><code>limit</code></td><td>integer</td><td><code>50</code></td><td>1–500</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>get_source_meta —— 取数据源元数据</h3>
+      <p>返回单个源的完整 meta:认证方式、官方限速、规模、增量、抓取方式、代理策略、合规风险与端点列表。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>入参</th><th>类型</th><th>必填</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>source</code></td><td>string</td><td><span class="badge danger">必填</span></td><td>源 id,如 <code>ofac_sdn</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        返回的 meta 里包含 <code>auth</code>(认证方式)、<code>limits</code>(官方限速)、<code>scale</code>(规模)、<code>increment</code>(增量策略)、
+        <code>crawl</code>(抓取方式)、<code>proxy_policy</code>(代理策略)、<code>risk</code>(合规风险)与 <code>endpoints</code>(端点列表)。
+      </p>
+
+      <h3>describe_endpoint —— 描述端点请求与响应</h3>
+      <p>返回端点的请求参数(名称/位置/类型/必填/正则/示例)与响应结构(字段/列表路径/总数字段)。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>入参</th><th>类型</th><th>必填</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>source</code></td><td>string</td><td><span class="badge danger">必填</span></td><td>源 id</td></tr>
+            <tr><td><code>endpoint</code></td><td>string</td><td><span class="badge danger">必填</span></td><td>端点 id</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "meta": {
+    "source": "gleif_lei",
+    "endpoint": "lei_records",
+    "schema_version": "1.1"
+  },
+  "data": {
+    "source": { "id": "gleif_lei", "name": "GLEIF LEI", "...": "源元数据" },
+    "endpoint": {
+      "id": "lei_records",
+      "name": "LEI 记录检索",
+      "method": "GET",
+      "params": [
+        {
+          "name": "size",
+          "type": "int",
+          "required": false,
+          "desc": "每页条数(最大 200)",
+          "default": 10,
+          "in": "query"
+        },
+        {
+          "name": "page",
+          "type": "int",
+          "required": false,
+          "default": 1,
+          "in": "query"
+        }
+      ],
+      "page_size": null,
+      "budget_ms": 400,
+      "response": {
+        "media_type": "application/json",
+        "shape": "object",
+        "fields": [
+          { "name": "data", "type": "array" },
+          { "name": "meta.pagination.total", "type": "int" }
+        ],
+        "item_path": "data",
+        "total_field": "meta.pagination.total"
+      }
+    }
+  }
+}
+</code></pre>
+      </div>
+      <p>上面是 <code>gleif_lei</code> 的 <code>lei_records</code> 端点的真实结构(源元数据部分已省略):参数带 <code>in</code>(位置)、<code>required</code>(必填)、<code>pattern</code>(正则)、<code>example</code>(示例),响应带 <code>item_path</code>(列表路径)与 <code>total_field</code>(总数字段)。</p>
+
+      <h3>query_source —— 查询数据源</h3>
+      <p>
+        按端点定义发起查询,返回信封 <code>{meta, data, fields}</code>。硬预算 ≤500ms,超时自动降级并标注 <code>degraded=true</code>。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>入参</th><th>类型</th><th>默认</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>source</code></td><td>string</td><td><span class="badge danger">必填</span></td><td>源 id</td></tr>
+            <tr><td><code>endpoint</code></td><td>string</td><td><span class="badge danger">必填</span></td><td>端点 id</td></tr>
+            <tr><td><code>params</code></td><td>object</td><td><code>{}</code></td><td>端点参数,键为参数名</td></tr>
+            <tr><td><code>fields</code></td><td>array&lt;string&gt;</td><td>空</td><td>只返回这些字段</td></tr>
+            <tr><td><code>limit</code></td><td>integer</td><td><code>20</code></td><td>1–500</td></tr>
+            <tr><td><code>since</code></td><td>string</td><td>无</td><td>增量窗口起点,如 <code>2026-10-01</code></td></tr>
+            <tr><td><code>timeout_ms</code></td><td>integer</td><td><code>500</code></td><td>50–500</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>get_meta_schema —— 取 meta 规范</h3>
+      <p>返回网关自身的 meta 规范(源/端点/请求/响应信封的字段定义)。无入参。</p>
+
+      <h2>接入客户端</h2>
+
+      <h3>安装</h3>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>pip3 install .              # 从仓库根装
+</code></pre>
+      </div>
+      <p>
+        装完得到两个入口:<code>a-source-gateway-mcp</code>(MCP server,stdio)和 <code>a-source-gateway mcp</code>(同一个服务的 CLI 写法)。
+        不想装包也可以直接跑模块:<code>python3 -m a_source_gateway.mcp_server</code>。
+      </p>
+
+      <h3>客户端配置</h3>
+      <p>仓库里的样例在 <code>examples/mcp_client.json</code>:</p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "mcpServers": {
+    "a-source-gateway": {
+      "command": "a-source-gateway-mcp",
+      "args": [],
+      "env": {
+        "A_GATEWAY_CONTACT": "you@example.com"
+      }
+    }
+  }
+}
+</code></pre>
+      </div>
+      <p>不用装包就换成模块调用,并把网关地址显式写上:</p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "mcpServers": {
+    "a-source-gateway": {
+      "command": "python3",
+      "args": ["-m", "a_source_gateway.mcp_server"],
+      "env": {
+        "A_GATEWAY_CONTACT": "you@example.com",
+        "A_GATEWAY_URL": "http://127.0.0.1:8848"
+      }
+    }
+  }
+}
+</code></pre>
+      </div>
+      <div class="callout tip">
+        <div class="callout-title"><span class="callout-icon">✓</span><code>A_GATEWAY_CONTACT</code> 填真实邮箱</div>
+        <div class="callout-body">
+          <p>
+            它是<strong>联系邮箱、不是密钥</strong>,但会写进 User-Agent:SEC、OpenAlex 等上游据此识别调用方,<strong>不带邮箱 SEC 直接 403</strong>。
+          </p>
+          <p>
+            UA 是<strong>哪个进程</strong>发的,取决于走哪条平面:走 Go 平面时是<strong>网关进程</strong>的 <code>A_GATEWAY_CONTACT</code>;
+            走回落平面时是 <strong>MCP server 进程</strong>的 <code>A_GATEWAY_CONTACT</code>。两边都配上最稳妥。
+          </p>
+        </div>
+      </div>
+
+      <h2>回落语义</h2>
+      <p>
+        MCP server 默认把工具调用<strong>转发给 Go 网关的 HTTP API</strong>,地址取自 <code>A_GATEWAY_URL</code>(默认 <code>http://127.0.0.1:8848</code>)。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>情况</th><th>行为</th><th><code>meta.gateway</code></th></tr>
+          </thead>
+          <tbody>
+            <tr><td>网关可达</td><td>转发给 Go 网关</td><td><code>"go"</code></td></tr>
+            <tr><td>网关连不上(连接被拒 / 超时 / 域名解析失败)</td><td>回落进程内 Python resolver</td><td><code>"python-fallback"</code></td></tr>
+            <tr><td>网关活着但返回 4xx / 5xx</td><td><strong>不回落</strong>,按业务错误返回</td><td><code>"go"</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        回落是<strong>可观测</strong>的:结果信封里的 <code>meta.gateway</code> 标明走的是哪条平面,而且每次回落都会写一行 stderr 日志 —— 不静默降级。
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">console</span></div>
+        <pre><code>[mcp-server] Go 网关不可达(http://127.0.0.1:59999): URLError: &lt;urlopen error [Errno 61] Connection refused&gt;; 回落到本地 Python resolver
+[mcp-server] tool=list_sources gateway=python-fallback
+</code></pre>
+      </div>
+      <div class="callout warn">
+        <div class="callout-title"><span class="callout-icon">!</span>stdout 是协议通道,日志一律走 stderr</div>
+        <div class="callout-body">
+          <p>
+            MCP 的 stdout 传的是协议帧,任何往 stdout 打的日志都会破坏会话。所以回落日志、工具调用日志都写 stderr。
+            调试时把 stderr 重定向出来看,别去翻 stdout。
+          </p>
+        </div>
+      </div>
+
+      <h2>排障</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>症状</th><th>先查</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>客户端报找不到命令</td><td><code>which a-source-gateway-mcp</code>;或改用 <code>python3 -m a_source_gateway.mcp_server</code></td></tr>
+            <tr><td><code>meta.gateway</code> 是 <code>python-fallback</code></td><td>Go 网关没起或地址不对:<code>curl -s http://127.0.0.1:8848/livez</code>;地址用 <code>A_GATEWAY_URL</code> 覆盖</td></tr>
+            <tr><td><code>meta.gateway</code> 是 <code>go</code> 但报 4xx / 5xx</td><td>网关活着,这是业务错误,<strong>不会回落</strong>;按 <a href="envelope.html">信封与降级</a>处理</td></tr>
+            <tr><td>回落时列不出源</td><td>回落路径靠本机的 <code>data/</code> 建注册表;用 <code>A_GATEWAY_DATA_DIR</code> 指向事实源目录</td></tr>
+            <tr><td>上游 403</td><td><code>A_GATEWAY_CONTACT</code> 没设成真实邮箱</td></tr>
+            <tr><td><code>meta.errors</code> 里是 <code>contact_required</code></td><td>该源要求 UA 带联系邮箱,但当前平面没配 <code>A_GATEWAY_CONTACT</code> —— 按信封里的 hint 设好再试</td></tr>
+            <tr><td>查询超时但没报错</td><td>信封里 <code>degraded=true</code> + <code>meta.fallback.upstream_url</code>,见 <a href="envelope.html">信封与降级</a></td></tr>
+            <tr><td>日志里什么都没有</td><td>日志全在 stderr,不是 stdout</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="margin-top:18px">
+        工具的完整 HTTP 等价物在 <a href="api.html">API 参考</a>;降级信封怎么读在 <a href="envelope.html">信封与降级</a>;
+        网关没起来就先看 <a href="quickstart.html">快速部署</a>。
+      </p>
+
+    </div>
+
+    <nav class="pager" id="pager"></nav>
+
+    <footer class="page-footer">
+      <span>a-source-gateway 文档 · MIT License</span>
+      <span><a href="https://github.com/hamr-hub/a-source-gateway">GitHub 仓库</a> · <a href="index.html">回到首页</a></span>
+    </footer>
+  </main>
+
+  <nav class="toc" id="toc"></nav>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

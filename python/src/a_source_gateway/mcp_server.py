@@ -47,7 +47,7 @@ from .cache import BoundedCache
 from .config import load_config
 from .registry import build_registry
 from .resolver import Resolver
-from .schema import DEFAULT_BUDGET_MS, QueryRequest
+from .schema import DEFAULT_BUDGET_MS, SCHEMA_VERSION, QueryRequest
 
 CFG = load_config()
 OFFLINE = CFG.offline
@@ -179,13 +179,13 @@ async def _call_python(name: str, args: dict[str, Any]) -> Any:
     if name == "list_sources":
         items = r.list_sources(family=args.get("family", "") or "", q=args.get("q", "") or "")
         limit = int(args.get("limit", 50))
-        return {"meta": {"count": len(items), "schema_version": "1.0"},
+        return {"meta": {"count": len(items), "schema_version": SCHEMA_VERSION},
                 "data": items[:limit]}
     if name == "get_source_meta":
         s = r.get_source(args.get("source", "") or "")
         if not s:
             return {"meta": {"error": f"未知源 {args.get('source')}"}, "data": None}
-        return {"meta": {"source": s["id"], "schema_version": "1.0"}, "data": s}
+        return {"meta": {"source": s["id"], "schema_version": SCHEMA_VERSION}, "data": s}
     if name == "describe_endpoint":
         d = r.describe(args.get("source", "") or "", args.get("endpoint", "") or "")
         if not d:

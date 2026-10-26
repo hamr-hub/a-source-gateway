@@ -2,13 +2,13 @@
 
 **A 类(法规强制公开)数据源的通用网关** —— 不存储业务数据,只保留源元数据索引;
 数据按需实时取,**单次调用硬预算 ≤500ms**;同时提供 **HTTP API** 与 **MCP server**。
-运行时服务 **109 个源**(海外清单 107 + 国内清单已接入 2);国内另有一份候选清单在维护。
+运行时服务 **117 个源**(海外清单 107 + 国内清单已接入 10);国内清单另有 24 个候选待接入。
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Go](https://img.shields.io/badge/go-1.22%2B-00ADD8.svg)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](docs/meta-schema.md)
-[![Data sources](https://img.shields.io/badge/sources-109%20%2F%2010%20families-orange.svg)](data/source_inventory.csv)
+[![Data sources](https://img.shields.io/badge/sources-117%20%2F%2010%20families-orange.svg)](data/source_inventory.csv)
 
 ---
 
@@ -25,7 +25,7 @@ OpenAlex、Crossref……)有个共同特征:**数据本身免费且公开,但�
                     ┌──────────────────────────────────────────┐
   调用方 ──HTTP/MCP─▶│ ① Go 网关面(传输与调度)                │
                     │   路由 · 元数据 · 缓存 · 限速 · 预算      │
-                    │   109 源 / 154 端点 / ≤500ms 硬预算       │
+                    │   117 源 / 164 端点 / ≤500ms 硬预算       │
                     └───────────────────┬──────────────────────┘
                                         │ 原始字节
                     ┌───────────────────▼──────────────────────┐
@@ -244,7 +244,7 @@ print(env.meta.total, env.meta.latency_ms, env.meta.cached)
 
 ## 数据源覆盖
 
-109 个源 / 10 大族,官方入口逐条实测校验(86 个直连 200、5 个其他可达响应(202/302/307/405)、
+117 个源 / 10 大族,官方入口逐条实测校验(86 个直连 200、5 个其他可达响应(202/302/307/405)、
 15 个需 key 或浏览器 UA(401/403)、3 个本机网络层不可达,**0 个死链**):
 
 | 族 | 源数 | 代表 |
@@ -311,8 +311,17 @@ print(env.meta.total, env.meta.latency_ms, env.meta.cached)
 
 ## 文档
 
+**上手最快的方式是打开文档站**(快速部署 / API 用法 / 在线调试 / 加源流程):
+
+```bash
+make docs                 # 起在 http://127.0.0.1:8000/(带网关代理, 调试台可直接用)
+```
+
+也可以直接看静态文件:`site/index.html`。零外部依赖,不引 CDN,离线可读。
+
 | 文档 | 内容 |
 |---|---|
+| [**文档站 `site/`**](site/index.html) | **快速部署 / API 参考 / 信封与降级 / 在线调试台 / MCP 集成 / 加源指南** |
 | [`AGENTS.md`](AGENTS.md) | **智能体操作手册** —— "把 xxx 网站加进来"的完整流程 |
 | [`docs/architecture.md`](docs/architecture.md) | 方案文档:双平面架构、模块、数据流、协议、部署、演进 |
 | [`docs/tech-selection.md`](docs/tech-selection.md) | 技术选型:21 条 ADR(候选对比、决策与代价) |
@@ -337,6 +346,7 @@ a-source-gateway/
 ├── gateway/                      Go 网关(独立 go.mod,只用标准库)
 ├── data/                         四份事实源(两平面共享)
 ├── scripts/                      智能体接入工具链
+├── site/                         文档站(静态,零依赖)
 ├── docs/  deploy/  examples/
 └── AGENTS.md  CLAUDE.md  GOVERNANCE.md
 ```

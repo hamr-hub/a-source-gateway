@@ -129,6 +129,20 @@ func (c *Cache) Put(key string, value any, ttlSeconds int) {
 	}
 }
 
+// Entries returns a snapshot of the cached entries.
+//
+// The map and the Entry structs are copies, but Entry.Value still points at
+// the cached object: a caller must treat the value as read only.
+func (c *Cache) Entries() map[string]Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]Entry, len(c.items))
+	for k, el := range c.items {
+		out[k] = *el.Value.(*node).entry
+	}
+	return out
+}
+
 // Hits returns the number of accesses of an entry (used for the adaptive
 // TTL: an entry with three or more hits is refreshed with a shorter TTL).
 func (c *Cache) Hits(key string) int {

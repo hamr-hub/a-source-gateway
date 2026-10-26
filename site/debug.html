@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API 调试台 · a-source-gateway 文档</title>
+<meta name="description" content="a-source-gateway 在线 API 调试台:选源、选端点、自动生成参数、发请求、读信封;附命令行调试方法与故障定位表。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="topbar">
+  <button class="icon-btn nav-toggle" id="nav-toggle" type="button" aria-label="打开目录" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+  <a class="brand" href="index.html">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0f6fb8"/>
+      <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round">
+        <path d="M8 11h6M8 21h6M18 16h6"/><path d="M14 11v10"/>
+      </g>
+      <circle cx="24" cy="16" r="2.6" fill="#ffffff"/>
+    </svg>
+    <span>a-source-gateway</span>
+    <span class="brand-sub">文档</span>
+  </a>
+  <span class="topbar-spacer"></span>
+  <div class="topbar-actions">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input class="search-input" id="search-input" type="search" placeholder="搜索文档" aria-label="搜索文档" autocomplete="off">
+      <span class="search-kbd">/</span>
+      <div class="search-results" id="search-results" hidden></div>
+    </div>
+    <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换主题"></button>
+    <a class="icon-btn" href="https://github.com/hamr-hub/a-source-gateway" aria-label="GitHub 仓库" title="GitHub 仓库">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 .5a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.2c-3.2.7-3.88-1.38-3.88-1.38-.53-1.34-1.29-1.7-1.29-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0024 12.5 11.5 11.5 0 0012 .5z"/>
+      </svg>
+    </a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav-group">
+      <div class="nav-group-title">开始</div>
+      <a class="nav-link" href="index.html">首页</a>
+      <a class="nav-link" href="quickstart.html">快速部署</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接口</div>
+      <a class="nav-link" href="api.html">API 参考</a>
+      <a class="nav-link" href="envelope.html">信封与降级</a>
+      <a class="nav-link" href="debug.html">API 调试台</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接入</div>
+      <a class="nav-link" href="mcp.html">MCP 集成</a>
+      <a class="nav-link" href="adding-source.html">加源指南</a>
+    </nav>
+  </aside>
+
+  <main class="content" id="main">
+    <div class="doc">
+
+      <h1>API 调试台</h1>
+      <p class="lede">
+        这一页既是<strong>能真发请求的在线控制台</strong>,也是<strong>命令行调试手册</strong>。
+        控制台直接向网关发 <code>POST /v1/query</code>、读统一信封、生成等价 curl;
+        下面的命令行段落则是同一套动作的终端版本,适合贴进 issue、PR 描述或 CI。
+      </p>
+
+      <h2>调试台怎么用</h2>
+      <p>三行起服务,然后打开本页:</p>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>make up                            # 起网关(127.0.0.1:8848);或 make gateway-run 跑本地二进制
+python3 scripts/serve_docs.py        # 起文档站(127.0.0.1:8000),并把 /__gateway/* 同源代理到网关
+# 浏览器打开 http://127.0.0.1:8000/debug.html
+</code></pre>
+      </div>
+
+      <p>
+        <code>scripts/serve_docs.py</code> 不是普通的静态服务器:它把 <code>/__gateway/&lt;path&gt;</code>
+        原样转发到 <code>http://127.0.0.1:8848/&lt;path&gt;</code>(method/body/query 不变,
+        转发 <code>Content-Type</code>、<code>Accept</code>、<code>X-Gateway-Trace-Id</code>、
+        <code>X-Request-Id</code>、<code>User-Agent</code>)。
+        所以调试台默认走 <code>/__gateway</code> 前缀 —— <strong>同源,不触发浏览器跨域</strong>。
+      </p>
+
+      <div class="callout tip">
+        <div class="callout-title"><span class="callout-icon">✓</span>前缀填什么,决定你能不能拿到响应</div>
+        <div class="callout-body">
+          <ul>
+            <li>
+              <strong>同源代理(默认,推荐)</strong>:前缀填 <code>/__gateway</code>。
+              网关没起时,代理会返回 <strong>502</strong> 和一段 JSON,里面 <code>detail</code> 说明"网关不可达",
+              <code>hint</code> 说明"先启动网关(make up 或 make gateway-run), 再刷新本页"。调试台会原样显示这两段。
+            </li>
+            <li>
+              <strong>直连</strong>:前缀改成完整 URL(如 <code>http://127.0.0.1:8848</code>)。
+              <strong>网关没有开 CORS 响应头</strong>,所以浏览器会拦截跨域响应 ——
+              只有当这个文档站页面本身就与网关同源(例如你也用同一个地址起了网关)才可用。
+              调试台会明确区分"跨域被拦截"和"网关连不上",不会假装成功。
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <h2>在线调试台</h2>
+      <p>
+        左边构造请求,右边读响应。选源 → 选端点 → 参数模板自动生成 → 发请求。
+        所有动作都真的打到网关,没有 mock。
+      </p>
+
+      <div class="console">
+        <div class="console-col">
+
+          <div class="panel">
+            <div class="panel-head">
+              <span>① 网关地址</span>
+              <span id="dbg-status"><span class="badge">检测中…</span></span>
+            </div>
+            <div class="panel-body">
+              <div class="field">
+                <label for="dbg-prefix">地址前缀</label>
+                <input type="text" id="dbg-prefix" value="/__gateway" spellcheck="false" autocomplete="off">
+                <p class="inline-hint">
+                  同源代理填 <code>/__gateway</code>;直连填完整地址如 <code>http://127.0.0.1:8848</code>。
+                </p>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="dbg-limit">limit <span class="hint">1–500,默认 20</span></label>
+                  <input type="number" id="dbg-limit" value="20" min="1" max="500" step="1">
+                </div>
+                <div class="field">
+                  <label for="dbg-timeout">timeout_ms <span class="hint">50–500,默认 500</span></label>
+                  <input type="number" id="dbg-timeout" value="500" min="50" max="500" step="10">
+                </div>
+              </div>
+              <div class="field">
+                <label>预置示例</label>
+                <div class="row">
+                  <button class="btn" type="button" data-preset="gleif_lei">GLEIF LEI</button>
+                  <button class="btn" type="button" data-preset="crossref">Crossref</button>
+                  <button class="btn" type="button" data-preset="openalex">OpenAlex</button>
+                </div>
+                <p class="inline-hint">一键填好源与端点;参数仍用端点声明的 <code>example</code>/<code>default</code>。</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <span>② 数据源</span>
+              <span id="dbg-src-count" class="badge">加载中…</span>
+            </div>
+            <div class="panel-body">
+              <div class="field">
+                <label for="dbg-src-filter">按关键词过滤 <span class="hint">搜 id / 名称 / 机构 / 摘要</span></label>
+                <input type="search" id="dbg-src-filter" placeholder="例如 制裁 / ofac / crossref" spellcheck="false" autocomplete="off">
+              </div>
+              <div class="endpoint-list" id="dbg-src-list">
+                <div class="endpoint-item" style="cursor:default">加载中…</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <span>③ 端点</span>
+              <span id="dbg-ep-count" class="badge">—</span>
+            </div>
+            <div class="panel-body">
+              <div class="endpoint-list" id="dbg-ep-list">
+                <div class="endpoint-item" style="cursor:default">先选一个源</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <span>④ 参数与发送</span>
+            </div>
+            <div class="panel-body">
+              <div id="dbg-params">
+                <p class="inline-hint">选好端点后,这里会按端点声明的 <code>example</code>(其次 <code>default</code>)生成参数模板。</p>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <button class="btn btn-primary" type="button" id="dbg-send">发送请求</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>等价 curl</label>
+                <pre id="dbg-curl" style="margin:0;padding:11px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-code);font-size:12.4px;white-space:pre-wrap;word-break:break-word">（选好端点后自动生成）</pre>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="console-col">
+
+          <div class="panel">
+            <div class="panel-head">
+              <span>⑤ 响应信封</span>
+              <span style="display:flex;gap:8px;align-items:center">
+                <button class="btn" type="button" id="dbg-retry" hidden>重试</button>
+                <button class="copy-btn" type="button" id="dbg-copy-curl">复制 curl</button>
+              </span>
+            </div>
+            <div class="panel-body">
+              <div class="console-status" id="dbg-resp-status">
+                <span class="badge">尚未发送</span>
+              </div>
+              <div id="dbg-resp-msg" style="margin-top:12px"></div>
+              <pre class="out" id="dbg-resp-json" style="margin-top:12px">（点「发送请求」后，这里显示完整信封 JSON）</pre>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="callout info">
+        <div class="callout-title"><span class="callout-icon">i</span>降级是正常现象,不是故障</div>
+        <div class="callout-body">
+          <p>
+            网关给上游取数留的墙钟预算是 <strong>400ms</strong>(留 100ms 给解析与序列化)。
+            从中国直连欧美上游,实测往返常常 0.4–7.5s —— 所以跨境源<strong>第一次调用大概率
+            <code>degraded=true</code></strong>,<code>meta.errors[0].type == "timeout"</code>,
+            同时 <code>meta.fallback.upstream_url</code> 给出可直连的上游地址。
+          </p>
+          <p>
+            网关会在<strong>后台补数</strong>。等几秒再点一次同一个查询,就命中缓存:
+            <code>cached=true</code>、<code>latency_ms</code> 常是 1ms。调试台在检测到降级时会给「重试」按钮,
+            点它会在约 1.5 秒后自动重发同一个请求。
+          </p>
+        </div>
+      </div>
+
+      <h2>预置示例:三步看到信封</h2>
+      <p>不想在控制台里点,直接看原始响应也行 —— 下面三条路径都经由同源代理,浏览器可直接打开。</p>
+
+      <div class="card-grid">
+        <button class="card" type="button" data-gw="/__gateway/v1/sources?limit=500" style="font:inherit;text-align:left;cursor:pointer">
+          <div class="card-title">列源</div>
+          <div class="card-desc"><code>GET /v1/sources?limit=500</code> —— 全部源 + <code>meta.count</code>。每个源带 family / org / country / summary / link_status / scale / endpoint_count。<strong>点开新标签页</strong>。</div>
+        </button>
+        <button class="card" type="button" data-gw="/__gateway/v1/sources/crossref/endpoints/works" style="font:inherit;text-align:left;cursor:pointer">
+          <div class="card-title">看端点</div>
+          <div class="card-desc"><code>GET /v1/sources/crossref/endpoints/works</code> —— 端点的参数表与响应结构。调不通之前先看它,别试错。<strong>点开新标签页</strong>。</div>
+        </button>
+        <button class="card" type="button" data-gw="/__gateway/v1/query?source=gleif_lei&amp;endpoint=lei_records&amp;params=%7B%22size%22%3A2%7D&amp;limit=2" style="font:inherit;text-align:left;cursor:pointer">
+          <div class="card-title">查一次</div>
+          <div class="card-desc"><code>GET /v1/query?source=…&amp;endpoint=…&amp;params=…</code> —— 与 POST 等价的浏览器友好形式,直接返回统一信封。<strong>点开新标签页</strong>。</div>
+        </button>
+      </div>
+
+      <p class="inline-hint">
+        这三条路径都挂在同源代理 <code>/__gateway</code> 下,所以只有用
+        <code>python3 scripts/serve_docs.py</code> 起的文档站才能打开;
+        换了端口或直接用静态服务器托管 <code>site/</code> 时,网关路径不存在。
+      </p>
+
+      <h2>命令行调试</h2>
+      <p>控制台的每个动作在终端里都有一条对应命令。下面这几条按"排查顺序"排列。</p>
+
+      <h3>curl 速查</h3>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># 1) 活着吗? /livez = 进程活着, /readyz = 注册表已加载能接流量, /healthz = 健康探针
+curl -s http://127.0.0.1:8848/livez | python3 -m json.tool
+curl -s http://127.0.0.1:8848/readyz | python3 -m json.tool
+
+# 2) 列源(关键词过滤)
+curl -s "http://127.0.0.1:8848/v1/sources?q=制裁" | python3 -m json.tool
+
+# 3) 看端点怎么调 —— 先看它,别试错
+curl -s http://127.0.0.1:8848/v1/sources/crossref/endpoints/works | python3 -m json.tool
+
+# 4) 查一次
+curl -s -X POST http://127.0.0.1:8848/v1/query -H 'Content-Type: application/json' \
+  -d '{"source":"crossref","endpoint":"works","params":{},"limit":3}' | python3 -m json.tool
+</code></pre>
+      </div>
+
+      <h3>证据关卡:verify_source.py</h3>
+      <p>
+        这是<strong>加源流程的硬门槛</strong>,也是判断"我声明的字段到底对不对"的唯一可靠办法:
+        它真的去请求上游,然后断言声明的元数据。
+      </p>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>python3 scripts/verify_source.py "My Journal API" --direct-only
+</code></pre>
+      </div>
+
+      <p>断言这四件事:</p>
+      <ul>
+        <li>声明的 <code>response.item_path</code> 在真实响应里<strong>确实</strong>指向一个列表;</li>
+        <li>声明的 <code>response.total_field</code> <strong>确实</strong>是一个数字;</li>
+        <li><code>response.fields</code> 里声明的字段名在返回条目里<strong>确实</strong>出现;</li>
+        <li>本次调用<strong>没有降级</strong>(降级的调用不算"验证通过")。</li>
+      </ul>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>退出码</th><th>含义</th><th>你该做什么</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="badge ok">0</span></td><td>已用真实数据验证通过</td><td>进入下一步</td></tr>
+            <tr><td><span class="badge warn">1</span></td><td>断言失败,或本次调用是降级的</td><td><strong>先看断言名</strong>,见下表</td></tr>
+            <tr><td><span class="badge danger">2</span></td><td><strong>根本连不上上游</strong></td><td>环境问题,不是源的问题 —— 如实报告,不要伪造</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>失败的断言名</th><th>说明</th><th>处置</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>not_degraded</code></td><td>这次调用降级了(通常是超时)</td><td><strong>网络/预算问题,别改元数据</strong></td></tr>
+            <tr><td><code>item_path_resolves_to_list</code></td><td>声明的 <code>item_path</code> 没指向列表</td><td><strong>元数据写错了</strong>,去改 <code>data/endpoints.json</code></td></tr>
+            <tr><td><code>total_field_resolves_to_number</code></td><td>声明的 <code>total_field</code> 不是数字</td><td><strong>元数据写错了</strong>,去改</td></tr>
+            <tr><td><code>required_params_available</code></td><td>必填参数既没有 <code>example</code> 也没有 <code>default</code></td><td>给参数补 <code>example</code>,或用 <code>--params</code> 补上</td></tr>
+            <tr><td><code>declared_fields_present</code></td><td>声明的字段名在真实响应里找不到(严重度 warn)</td><td>核对字段路径写法</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <div class="callout-title"><span class="callout-icon">!</span>为什么建议要加 --direct-only</div>
+        <div class="callout-body">
+          <p>
+            走网关时上游预算只有 <strong>400ms</strong>,而从中国到欧美上游的实测往返常常是
+            <strong>0.4–7.5s</strong> —— 于是调用会<strong>正常地降级</strong>,
+            <code>not_degraded</code> 断言随之失败、退出码变成 <code>1</code>。
+            <strong>那不是元数据写错了,是网络慢。</strong>
+            <code>--direct-only</code> 让验证脚本直连上游(带自己的超时),不受网关 400ms 预算影响,
+            才能真正回答"我声明的字段对不对"。
+          </p>
+          <p>代价是直连验证<strong>不覆盖网关这一段</strong>,所以<strong>两条都要跑</strong>:</p>
+          <div class="code-block" style="margin-bottom:0">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>python3 scripts/verify_source.py "My Journal API" --direct-only   # 元数据对不对
+python3 scripts/verify_source.py "My Journal API"                  # 网关在预算内能不能通
+</code></pre>
+          </div>
+          <p style="margin-top:10px">
+            第二条在网络慢时返回 <code>DEGRADED</code> + 退出码 <code>1</code>,这是<strong>预期行为</strong>,
+            不是源有问题;它证明的是"网关在预算内优雅降级并给出直连兜底"。
+          </p>
+        </div>
+      </div>
+
+      <h3>交付物:demo.py</h3>
+      <p>产出<strong>三样东西</strong>:端点说明(干什么的、必填参数、限速口径)、一条可复制的 curl、<strong>真实的</strong>响应信封(data 截断到前 1–2 条)。</p>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>python3 scripts/demo.py "My Journal API" --limit 2
+</code></pre>
+      </div>
+
+      <p>注意:<code>demo.py</code> 遇到降级会<strong>非零退出</strong> —— 它不拿降级数据当"跑通了"给人看。</p>
+
+      <h3>make 目标</h3>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>命令</th><th>作用</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>make demo SOURCE=crossref</code></td><td>调用示例 + 真实数据</td></tr>
+            <tr><td><code>make verify-source SOURCE=crossref</code></td><td>证据关卡(真实请求 + 断言)</td></tr>
+            <tr><td><code>make verify-all</code></td><td>复验注册表里所有源,汇总写到 <code>verify-report.json</code></td></tr>
+            <tr><td><code>make validate</code></td><td>校验 <code>data/</code> 下的数据文件</td></tr>
+            <tr><td><code>make check</code></td><td>ruff + mypy + pytest + 数据校验 + Go 构建/测试 + 注册表 parity + 文档站自检</td></tr>
+            <tr><td><code>make bench-gateway</code></td><td>对 Go 网关跑延迟基准(主运行时)</td></tr>
+            <tr><td><code>make parity</code></td><td>校验 Go 与 Python 构建出的注册表一致</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        复验全部源(逐源子进程,单源失败不拖垮整批;退出码 = 未通过源数,上限 100):
+      </p>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>python3 scripts/verify_source.py --all --json --timeout 15
+</code></pre>
+      </div>
+
+      <h2>指标与日志</h2>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>curl -s http://127.0.0.1:8848/metrics | grep asg_     # Prometheus 指标
+curl -s http://127.0.0.1:8848/v1/stats | python3 -m json.tool
+curl -s http://127.0.0.1:8848/openapi.json | head -40             # OpenAPI 3.1 描述
+
+docker compose logs -f gateway     # 容器部署的日志
+journalctl -u a-source-gateway -f  # systemd 部署的日志
+</code></pre>
+      </div>
+
+      <p><code>GET /v1/stats</code> 里三个块值得盯:</p>
+      <ul>
+        <li><code>cache</code> —— 命中率(<code>hit_rate</code>)、条目数、缓存字节数。命中率低先看是不是每次都在打新查询键。</li>
+        <li><code>prewarm.states</code> —— 每个预热源是 <code>ok</code> 还是 <code>degraded</code>。一堆 degraded 通常是上游慢,不是源写错了。</li>
+        <li><code>parser</code> —— 当前解析引擎是 <code>python</code> 还是 <code>go</code>。</li>
+      </ul>
+
+      <h3>trace id</h3>
+      <p>
+        响应头带 <code>X-Gateway-Trace-Id</code>,信封 <code>meta.trace_id</code> 里也有同一个值。
+        入站时带 <code>X-Gateway-Trace-Id</code> 或 <code>X-Request-Id</code> 会被复用 ——
+        所以客户端自己生成的 request id 可以贯穿网关与日志:
+      </p>
+
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code>curl -s -D - -o /dev/null -X POST http://127.0.0.1:8848/v1/query \
+  -H 'Content-Type: application/json' -H 'X-Request-Id: my-trace-001' \
+  -d '{"source":"gleif_lei","endpoint":"lei_records","params":{"size":1},"limit":1}' | grep -i trace
+</code></pre>
+      </div>
+
+      <h2>故障定位表</h2>
+      <p>按症状查。先看 <code>meta.errors[]</code> 和 <code>meta.fallback</code> —— 它们会直接告诉你原因和下一步。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>症状</th><th>先查什么</th><th>处置</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>degraded=true</code></td>
+              <td><code>meta.errors[0].type</code>、<code>meta.upstream.status</code></td>
+              <td>跨境源首次调用大概率如此:等几秒再调一次命中缓存;或用 <code>meta.fallback.upstream_url</code> 直连上游</td>
+            </tr>
+            <tr>
+              <td><code>timeout</code></td>
+              <td><code>meta.upstream.latency_ms</code> 与端点 <code>budget_ms</code></td>
+              <td>上游慢于 400ms 预算。调小 <code>page_size</code>,或改用 <code>--direct-only</code> 验证元数据</td>
+            </tr>
+            <tr>
+              <td><code>budget_exceeded</code></td>
+              <td>该端点的 <code>budget_ms</code> 与上游实际延迟</td>
+              <td>同上;必要时调小 <code>page_size</code></td>
+            </tr>
+            <tr>
+              <td><code>missing_param</code></td>
+              <td>错误消息里的参数名</td>
+              <td>在参数区补上该必填参数(端点声明的 <code>example</code> 会自动填,但可能已被清空)</td>
+            </tr>
+            <tr>
+              <td><code>endpoint_not_found</code></td>
+              <td>端点 id 拼写</td>
+              <td>先 <code>GET /v1/sources/{id}</code> 看端点列表;注意没有专用端点的源只有 <code>entry</code></td>
+            </tr>
+            <tr>
+              <td><code>contact_required</code>(403)</td>
+              <td>上游是否要求 UA 带邮箱</td>
+              <td>设 <code>A_GATEWAY_CONTACT=you@example.com</code> 后重启网关再试</td>
+            </tr>
+            <tr>
+              <td><code>response_too_large</code></td>
+              <td>端点 <code>page_size</code> 与 <code>limit</code></td>
+              <td>调小 <code>page_size</code> 或 <code>limit</code>;文件型源应直连上游</td>
+            </tr>
+            <tr>
+              <td><code>offline</code></td>
+              <td><code>GET /readyz</code> 与 <code>/v1/stats</code> 的 <code>offline</code></td>
+              <td>网关处于离线模式,数据不是实时的 —— 查上游可达性后再重试</td>
+            </tr>
+            <tr>
+              <td><code>stale</code></td>
+              <td><code>meta.cache_age_s</code></td>
+              <td>命中的是过期缓存(上游已失败),看 <code>meta.errors[]</code> 的真实原因</td>
+            </tr>
+            <tr>
+              <td><code>parse_error</code></td>
+              <td>端点 <code>response.shape</code> 与 <code>item_path</code></td>
+              <td>上游返回结构与声明不一致 —— 回步骤 6 改元数据,别改解析器</td>
+            </tr>
+            <tr>
+              <td><code>upstream_error</code></td>
+              <td><code>meta.upstream.status</code></td>
+              <td>上游返回了错误码(4xx/5xx)。先看是不是 403 要邮箱,再看是不是上游自身故障</td>
+            </tr>
+            <tr>
+              <td>HTTP 502 + <code>detail</code> / <code>hint</code></td>
+              <td>这是<strong>文档站代理</strong>返回的,不是网关</td>
+              <td>网关没起或地址不对:按 <code>hint</code> 起网关(<code>make up</code> / <code>make gateway-run</code>),或改前缀</td>
+            </tr>
+            <tr>
+              <td>浏览器控制台报跨域被拦截</td>
+              <td>前缀是不是完整 URL、且与本页不同源</td>
+              <td>网关没开 CORS 头。改回 <code>/__gateway</code> 同源代理,或让文档站与网关同源</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>下一步</h2>
+      <div class="card-grid">
+        <a class="card" href="api.html">
+          <div class="card-title">API 参考</div>
+          <div class="card-desc">全部业务路由的完整参数与错误码;字段含义与取值范围。</div>
+        </a>
+        <a class="card" href="envelope.html">
+          <div class="card-title">信封与降级</div>
+          <div class="card-desc">统一信封的每个字段、缓存语义、错误类型表、降级兜底策略。</div>
+        </a>
+        <a class="card" href="adding-source.html">
+          <div class="card-title">加源指南</div>
+          <div class="card-desc">把一个新源接进来的九步流程:侦察 → 补语义 → 草稿 → 别名 → 校验 → 证据关卡。</div>
+        </a>
+      </div>
+
+    </div>
+
+    <nav class="pager" id="pager"></nav>
+
+    <footer class="page-footer">
+      <span>a-source-gateway 文档 · MIT License</span>
+      <span><a href="https://github.com/hamr-hub/a-source-gateway">GitHub 仓库</a> · <a href="index.html">回到首页</a></span>
+    </footer>
+  </main>
+
+  <nav class="toc" id="toc"></nav>
+</div>
+
+<script src="assets/site.js"></script>
+<script src="assets/debug.js"></script>
+</body>
+</html>

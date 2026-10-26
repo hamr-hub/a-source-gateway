@@ -22,7 +22,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `request_id` | string | 本次请求 id(12 位十六进制) |
-| `schema_version` | string | 信封版本,当前 `1.0` |
+| `schema_version` | string | 信封版本,当前 `1.1` |
 | `source` | string | **规范源 id**(即使用简称请求也会回报规范 id) |
 | `endpoint` | string | 端点 id |
 | `upstream` | object | `{url, method, status, latency_ms}` —— 实际打到的上游 |
@@ -189,6 +189,25 @@
 - `item_shape=list`(默认):列表在 `item_path` 指向的位置;
 - `item_shape=map`:顶层就是 `{id: 记录}` 字典,网关取**值域**作为列表
   (例:SEC `company_tickers` 是 `{"0": {...}, "1": {...}}`,实测 10,425 条)。
+
+### 3.2.1 `response.item_flatten`(1.1 新增,默认 false)
+
+上游的列表**套着列表**时,打开它会把内层列表**展平一层**。
+默认关闭 —— 隐式展平会悄悄改变既有端点的输出形状。
+
+上交所公告就是这种形状:`pageHelp.data` 是 `[[{...}], [{...}]]`(每条公告各装一个数组),
+声明 `item_flatten: true` 后,网关返回的是扁平的记录列表。
+
+### 3.2.2 `item_path` 支持数字下标(1.1 起)
+
+`item_path` 与 `total_field` 用**同一套**点号路径语义,段与段之间可以夹数字下标:
+
+- `total_field` 一直支持(`0.total`);
+- `item_path` 从 1.1 起也支持(`0.data` —— 深交所 A 股列表的形状:
+  顶层是数组 `[{metadata:…, data:[…]}]`)。
+
+**顶层是数组时**:`item_path` 首段是数字才按下标定位;首段不是数字则**保持整个数组**
+(与 1.0 行为一致,不会变成空列表)。
 
 ### 3.3 `response.total_field`
 

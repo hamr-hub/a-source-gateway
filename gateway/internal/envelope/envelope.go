@@ -21,7 +21,7 @@ import (
 )
 
 // SchemaVersion is the envelope schema version.
-const SchemaVersion = "1.0"
+const SchemaVersion = "1.1"
 
 // Upstream describes the upstream call of a query.
 type Upstream struct {

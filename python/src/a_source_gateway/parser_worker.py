@@ -158,7 +158,8 @@ def _dig(node: Any, path: str) -> Any:
 
 def project(payload: Any, *, item_path: str | None = None, total_field: str | None = None,
             item_shape: str = "list", limit: int = 0,
-            fields: list[str] | None = None) -> tuple[Any, int | None, bool]:
+            fields: list[str] | None = None,
+            item_flatten: bool = False) -> tuple[Any, int | None, bool]:
     """从上游响应里取出列表、总数, 并按 fields/limit 裁剪。
 
     与 Resolver._project 语义一致, 唯一差别: 字段投影时遇到非字典行不会抛错,
@@ -173,9 +174,23 @@ def project(payload: Any, *, item_path: str | None = None, total_field: str | No
     data: Any = payload
     if item_shape == "map" and isinstance(payload, dict):
         data = list(payload.values())          # 形如 {"0": {...}, "1": {...}}
-    elif item_path and isinstance(payload, dict):
-        node = _dig(payload, item_path)
-        data = node if node is not None else []
+    elif item_path:
+        # 顶层是数组时: 路径首段是数字才按下标定位(如 "0.data");
+        # 否则保持整个数组(旧行为, 不能让"顶层数组"变成空列表)。
+        head = item_path.split(".")[0]
+        if isinstance(payload, dict) or head.isdigit():
+            node = _dig(payload, item_path)
+            data = node if node is not None else []
+        else:
+            data = payload
+        if item_flatten and isinstance(data, list) and data and isinstance(data[0], list):
+            flat: list[Any] = []
+            for sub in data:
+                if isinstance(sub, list):
+                    flat.extend(sub)
+                else:
+                    flat.append(sub)
+            data = flat
 
     truncated = False
     if isinstance(data, list):
@@ -274,12 +289,14 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
     item_path = spec.get("item_path") or None
     total_field = spec.get("total_field") or None
     item_shape = str(spec.get("item_shape") or "list")
+    item_flatten = bool(spec.get("item_flatten") or False)
 
     try:
         payload = parse_body(body, shape, max_rows)
         data, total, truncated = project(
             payload, item_path=item_path, total_field=total_field,
-            item_shape=item_shape, limit=limit, fields=fields)
+            item_shape=item_shape, limit=limit, fields=fields,
+            item_flatten=item_flatten)
     except Exception as e:                      # 兜底: 解析异常也要回一行
         _log(f"解析失败: {type(e).__name__}: {e}")
         return {"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}",

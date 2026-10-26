@@ -215,7 +215,8 @@
     ],
     "中国证监会 公开信息": [
       "csrc",
-      "证监会"
+      "证监会",
+      "csrc_news"
     ],
     "中国基金业协会 私募公示": [
       "amac",
@@ -305,6 +306,43 @@
       "acs",
       "census_bureau",
       "census_acs"
+    ],
+    "巨潮资讯网 证券代码清单": [
+      "cninfo",
+      "cninfo_stock",
+      "巨潮代码"
+    ],
+    "上海证券交易所 上市公司列表": [
+      "sse",
+      "sse_stock",
+      "上交所"
+    ],
+    "全国标准信息公共服务平台 国家标准": [
+      "std_samr",
+      "gb",
+      "国标"
+    ],
+    "中国政府网 政策文件库": [
+      "gov_policy",
+      "gov_cn",
+      "政策文件库"
+    ],
+    "国家法律法规数据库": [
+      "flk",
+      "npc_law",
+      "国家法律法规库"
+    ],
+    "深圳证券交易所 A股列表": [
+      "szse",
+      "szse_stock"
+    ],
+    "上海证券交易所 上市公司公告": [
+      "sse_notice",
+      "sse_bulletin"
+    ],
+    "中国证监会 行政处罚决定": [
+      "csrc_penalty",
+      "csrc_penalties"
     ]
   }
 }

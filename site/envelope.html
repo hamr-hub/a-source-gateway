@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>信封与降级 · a-source-gateway 文档</title>
+<meta name="description" content="a-source-gateway 响应信封 {meta,data,fields} 的逐字段解释、缓存语义、降级语义、错误类型全表与 trace id 关联排查。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="topbar">
+  <button class="icon-btn nav-toggle" id="nav-toggle" type="button" aria-label="打开目录" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+  <a class="brand" href="index.html">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0f6fb8"/>
+      <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round">
+        <path d="M8 11h6M8 21h6M18 16h6"/><path d="M14 11v10"/>
+      </g>
+      <circle cx="24" cy="16" r="2.6" fill="#ffffff"/>
+    </svg>
+    <span>a-source-gateway</span>
+    <span class="brand-sub">文档</span>
+  </a>
+  <span class="topbar-spacer"></span>
+  <div class="topbar-actions">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input class="search-input" id="search-input" type="search" placeholder="搜索文档" aria-label="搜索文档" autocomplete="off">
+      <span class="search-kbd">/</span>
+      <div class="search-results" id="search-results" hidden></div>
+    </div>
+    <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换主题"></button>
+    <a class="icon-btn" href="https://github.com/hamr-hub/a-source-gateway" aria-label="GitHub 仓库" title="GitHub 仓库">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 .5a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.2c-3.2.7-3.88-1.38-3.88-1.38-.53-1.34-1.29-1.7-1.29-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0024 12.5 11.5 11.5 0 0012 .5z"/>
+      </svg>
+    </a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav-group">
+      <div class="nav-group-title">开始</div>
+      <a class="nav-link" href="index.html">首页</a>
+      <a class="nav-link" href="quickstart.html">快速部署</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接口</div>
+      <a class="nav-link" href="api.html">API 参考</a>
+      <a class="nav-link" href="envelope.html">信封与降级</a>
+      <a class="nav-link" href="debug.html">API 调试台</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接入</div>
+      <a class="nav-link" href="mcp.html">MCP 集成</a>
+      <a class="nav-link" href="adding-source.html">加源指南</a>
+    </nav>
+  </aside>
+
+  <main class="content" id="main">
+    <div class="doc">
+
+      <h1>信封与降级</h1>
+      <p class="lede">
+        网关的每个查询都返回同一个信封：<strong><code>{meta, data, fields}</code></strong>。
+        <code>meta</code> 说清楚"这次请求打到哪、用了多久、有没有降级、命中多少"，
+        <code>data</code> 只放结果本身，<code>fields</code> 说明你点名了哪些字段。
+        <strong>机器读 <code>meta</code>，业务只读 <code>data</code></strong>——两者严格分离，
+        所以降级不会把你的解析逻辑搞崩。
+      </p>
+
+      <h2>信封三段式</h2>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "meta": {
+    "request_id": "",
+    "trace_id": "a89c0fbebbae1b64e5dfa8d30e261d6a",
+    "schema_version": "1.1",
+    "source": "gleif_lei",
+    "endpoint": "lei_records",
+    "parser": "python",
+    "upstream": {
+      "url": "https://api.gleif.org/api/v1/lei-records?page%5Bsize%5D=25&amp;page%5Bnumber%5D=1",
+      "method": "GET",
+      "status": null,
+      "latency_ms": 402
+    },
+    "latency_ms": 402,
+    "budget_ms": 500,
+    "cached": false,
+    "cache_age_s": 0,
+    "degraded": true,
+    "offline": false,
+    "count": 0,
+    "total": null,
+    "truncated": false,
+    "next_cursor": null,
+    "rate_limit": {},
+    "fallback": {
+      "upstream_url": "https://api.gleif.org/api/v1/lei-records?page%5Bsize%5D=25&amp;page%5Bnumber%5D=1",
+      "method": "GET",
+      "hint": "网关预算内取不到;可直连上游, 或稍后重试(后台正在补数)"
+    },
+    "errors": [
+      { "type": "timeout", "message": "上游超过 400ms 预算, 已降级" }
+    ]
+  },
+  "data": [],
+  "fields": []
+}
+</code></pre>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>段</th><th>内容</th><th>谁该看</th></tr></thead>
+          <tbody>
+            <tr><td><code>meta</code></td><td>20 个字段的请求元信息：打向哪个源、用了多少预算、有没有降级、命中没命中缓存</td><td>你的框架/SDK：决定要不要重试、要不要走兜底</td></tr>
+            <tr><td><code>data</code></td><td>结果本身：通常是列表，也可能是单个对象（<code>shape=object</code> 的端点）</td><td>你的业务代码</td></tr>
+            <tr><td><code>fields</code></td><td>本次点名的字段名数组</td><td>你的类型校验/文档生成</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout info">
+        <div class="callout-title"><span class="callout-icon">i</span>哪些接口返回信封</div>
+        <div class="callout-body">
+          <p>
+            <code>GET/POST /v1/query</code> 与 <code>GET /v1/sources</code> 返回完整三段式。
+            <code>GET /v1/sources/{id}</code> 与 <code>GET /v1/sources/{id}/endpoints/{eid}</code>
+            只返回 <code>{meta, data}</code>（没有 <code>fields</code>）；
+            <code>/</code>、<code>/v1/stats</code>、三个探针、<code>/v1/schema</code>
+            各自有自己的形状，不走信封。
+          </p>
+        </div>
+      </div>
+
+      <h2>meta 字段全表</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>含义</th><th>什么时候非空</th></tr></thead>
+          <tbody>
+            <tr><td><code>request_id</code></td><td>string</td><td>本次请求 id</td><td>Go 网关目前<strong>恒为空字符串</strong>（Python 参照实现会生成 12 位 hex）。做关联请用 <code>trace_id</code></td></tr>
+            <tr><td><code>trace_id</code></td><td>string</td><td>贯穿网关日志、上游调用与解析 worker 的关联 id</td><td>总是有：入站带 <code>X-Gateway-Trace-Id</code> / <code>X-Request-Id</code> 就复用，否则随机生成 32 位 hex</td></tr>
+            <tr><td><code>schema_version</code></td><td>string</td><td>信封结构版本</td><td>总是有，恒为 <code>"1.1"</code></td></tr>
+            <tr><td><code>source</code></td><td>string</td><td>实际命中的源 id</td><td>总是有。传入别名时这里给的是解析后的<strong>规范 id</strong></td></tr>
+            <tr><td><code>endpoint</code></td><td>string</td><td>端点 id</td><td>总是有</td></tr>
+            <tr><td><code>parser</code></td><td>string</td><td>真正解析出数据的引擎</td><td>总是有：<code>"python"</code> 或 <code>"go"</code></td></tr>
+            <tr><td><code>upstream</code></td><td>object</td><td>上游那一次调用的详情（4 个子字段，见下）</td><td>总是有对象；URL 在还没渲染时就可能是空串</td></tr>
+            <tr><td><code>latency_ms</code></td><td>int</td><td>客户端可见总耗时（毫秒）</td><td>总是有。做过任何工作的请求至少是 <code>1</code>，不会报 0</td></tr>
+            <tr><td><code>budget_ms</code></td><td>int</td><td>本次生效的总预算</td><td>总是有。默认 <code>500</code>；把 <code>timeout_ms</code> 调小，它会跟着变小</td></tr>
+            <tr><td><code>cached</code></td><td>bool</td><td>本次结果来自缓存</td><td>命中新鲜缓存、或命中过期但可用的缓存时为 <code>true</code></td></tr>
+            <tr><td><code>cache_age_s</code></td><td>int</td><td>缓存年龄（秒）</td><td>命中缓存时是缓存已存放的秒数；未命中是 <code>0</code></td></tr>
+            <tr><td><code>degraded</code></td><td>bool</td><td>这次返回<strong>不是完整正常结果</strong></td><td>超时、解析失败、上游报错、响应过大、缓存陈旧、缺联系邮箱等任何降级路径下为 <code>true</code></td></tr>
+            <tr><td><code>offline</code></td><td>bool</td><td>网关处于离线模式</td><td>只有 <code>A_GATEWAY_OFFLINE</code> 打开时为 <code>true</code>，此时只给元数据与缓存</td></tr>
+            <tr><td><code>count</code></td><td>int</td><td>本次返回的条数</td><td>总是有。列表就是长度，单个对象算 1，空结果是 0</td></tr>
+            <tr><td><code>total</code></td><td>int / null</td><td>上游的记录总数</td><td>来自端点定义的 <code>total_field</code>；上游没给这个字段时，列表结果退化成"本次条数"；降级兜底数据通常是 <code>null</code></td></tr>
+            <tr><td><code>truncated</code></td><td>bool</td><td>结果被截断了</td><td>超过 <code>limit</code>、或上游总数大于返回条数、或超预算被砍到前 5 条时为 <code>true</code></td></tr>
+            <tr><td><code>next_cursor</code></td><td>string / null</td><td>下一页游标</td><td>保留字段，Go 网关目前恒为 <code>null</code>；翻页请用端点自己的 <code>page</code> / <code>offset</code> 参数</td></tr>
+            <tr><td><code>rate_limit</code></td><td>object</td><td>限速余量</td><td>保留字段，Go 网关目前恒为 <code>{}</code>；限速口径请读源元数据的 <code>limits</code></td></tr>
+            <tr><td><code>fallback</code></td><td>object</td><td>降级时的直连兜底信息</td><td>降级时非空，含 <code>upstream_url</code>、<code>method</code>、<code>hint</code>；正常时是空对象 <code>{}</code></td></tr>
+            <tr><td><code>errors</code></td><td>array</td><td>本次调用的错误列表</td><td>正常时是空数组 <code>[]</code>；降级时至少有一项，形状是 <code>{"type":...,"message":...}</code>，带上游状态码时多一个 <code>status</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>upstream 的四个子字段</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>url</code></td><td>string</td><td>实际请求的上游 URL（模板渲染 + 参数归一 + percent 编码之后的结果）</td></tr>
+            <tr><td><code>method</code></td><td>string</td><td>对上游的 HTTP 方法，通常是 <code>GET</code></td></tr>
+            <tr><td><code>status</code></td><td>int / null</td><td>上游状态码。<strong>为 <code>null</code> 表示压根没拿到响应</strong>（超时、连不上）；有值表示拿到了（哪怕是 4xx/5xx）</td></tr>
+            <tr><td><code>latency_ms</code></td><td>int</td><td>上游那一次调用耗时（不含解析与序列化）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>data 与 fields</h2>
+      <p>
+        <code>data</code> 是上游结果经解析、投影、截断之后的产物。它通常是数组，但端点定义的
+        <code>response.shape</code> 是 <code>object</code> 且没有 <code>item_path</code> 时，
+        <code>data</code> 会是一个对象——按 <code>shape</code> 处理，不要默认它一定是 list。
+      </p>
+      <p>
+        <code>fields</code> 是<strong>你请求里点名的字段</strong>（<code>fields</code> 参数），没点名时是空数组
+        <code>[]</code>。它不是"实际返回了哪些字段"的清单——要那个信息，请看端点定义里的
+        <code>response.fields[]</code>（见 <a href="api.html">API 参考</a>）。
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">console</span></div>
+        <pre><code>$ curl -s -X POST http://127.0.0.1:8848/v1/query \
+    -H 'Content-Type: application/json' \
+    -d '{"source":"gleif_lei","endpoint":"lei_records","params":{"size":2},"fields":["type","id"],"limit":2}'
+{
+  "meta": {
+    "...": "...",
+    "count": 2,
+    "total": 3471073,
+    "truncated": true
+  },
+  "data": [
+    { "type": "lei-records", "id": "335800YDCVLAQSJR5968" },
+    { "type": "lei-records", "id": "335800B0F6URAV052H87" }
+  ],
+  "fields": ["type", "id"]
+}
+</code></pre>
+      </div>
+      <ul>
+        <li><strong>投影按顶层 key 匹配</strong>：点名 <code>type</code> 和 <code>id</code>，每条记录就只剩这两个顶层字段；嵌套结构不会被拆开。</li>
+        <li><strong>投影在解析之后做</strong>，不改变上游请求——带不带 <code>fields</code> 命中的是同一个缓存条目。</li>
+        <li><strong>截断规则</strong>：<code>limit</code> 砍掉超出部分并置 <code>truncated=true</code>；上游总数大于返回条数时同样置 <code>truncated=true</code>。</li>
+      </ul>
+
+      <h2>降级语义</h2>
+      <div class="callout warn">
+        <div class="callout-title"><span class="callout-icon">!</span>降级是 200，不是 5xx</div>
+        <div class="callout-body">
+          <p>
+            网关取不到数据时不会返回错误码，而是返回 <span class="badge ok">200</span> +
+            <code>meta.degraded=true</code> + <code>meta.errors[]</code> + <code>meta.fallback</code>。
+            <strong>只看 HTTP 状态码的代码会漏掉降级</strong>——务必检查 <code>meta.degraded</code>。
+          </p>
+        </div>
+      </div>
+
+      <h3>什么时候会降级</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>场景</th><th>表现</th></tr></thead>
+          <tbody>
+            <tr><td>上游慢于预算</td><td><code>timeout</code> + <code>fallback.upstream_url</code>，后台同时补数</td></tr>
+            <tr><td>上游返回了但解析不了</td><td><code>parse_error</code>，提示直连上游</td></tr>
+            <tr><td>上游返回 ≥400</td><td><code>upstream_error</code>（带 <code>status</code>），<code>data</code> 仍可能是空</td></tr>
+            <tr><td>响应体过大 / 端点是文件型大响应</td><td><code>response_too_large</code>，提示减小 <code>limit</code> 或直连</td></tr>
+            <tr><td>端点要联系邮箱但没配 <code>A_GATEWAY_CONTACT</code></td><td><code>contact_required</code>，给出配置提示</td></tr>
+            <tr><td>缓存已过期</td><td><code>stale</code>：先给你陈旧值，后台刷新（这是 SWR，不是故障）</td></tr>
+            <tr><td>网关离线</td><td><code>offline</code>：只给元数据与缓存</td></tr>
+            <tr><td>客户端可见耗时超预算</td><td><code>budget_exceeded</code>：结果被砍到前 5 条并置 <code>truncated=true</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>一份真实的降级信封</h3>
+      <p>
+        下面是从 <code>gleif_lei</code> / <code>lei_records</code> 真实抓到的降级返回：
+        上游 GLEIF 在 400ms 预算内没回话，网关给了兜底。
+      </p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">json</span></div>
+        <pre><code>{
+  "meta": {
+    "request_id": "",
+    "trace_id": "a89c0fbebbae1b64e5dfa8d30e261d6a",
+    "schema_version": "1.1",
+    "source": "gleif_lei",
+    "endpoint": "lei_records",
+    "parser": "python",
+    "upstream": {
+      "url": "https://api.gleif.org/api/v1/lei-records?page%5Bsize%5D=25&amp;page%5Bnumber%5D=1",
+      "method": "GET",
+      "status": null,
+      "latency_ms": 402
+    },
+    "latency_ms": 402,
+    "budget_ms": 500,
+    "cached": false,
+    "cache_age_s": 0,
+    "degraded": true,
+    "offline": false,
+    "count": 0,
+    "total": null,
+    "truncated": false,
+    "next_cursor": null,
+    "rate_limit": {},
+    "fallback": {
+      "upstream_url": "https://api.gleif.org/api/v1/lei-records?page%5Bsize%5D=25&amp;page%5Bnumber%5D=1",
+      "method": "GET",
+      "hint": "网关预算内取不到;可直连上游, 或稍后重试(后台正在补数)"
+    },
+    "errors": [
+      { "type": "timeout", "message": "上游超过 400ms 预算, 已降级" }
+    ]
+  },
+  "data": [],
+  "fields": []
+}
+</code></pre>
+      </div>
+      <p>逐条读这个信封：</p>
+      <ul>
+        <li><code>upstream.status = null</code> —— 压根没拿到上游响应，不是上游报错。</li>
+        <li><code>upstream.latency_ms = 402</code> —— 它一直等到 402ms 才放弃，正好卡在 400ms 预算上。</li>
+        <li><code>data = []</code> 且 <code>count = 0</code> —— 没有数据可给。</li>
+        <li><code>fallback.upstream_url</code> —— 你可以直接拿这个 URL 去上游取；<code>hint</code> 告诉你还有第二个选择：稍后重试。</li>
+        <li><code>errors[0].type = "timeout"</code> —— 机器可判定的失败原因。</li>
+      </ul>
+
+      <div class="callout tip">
+        <div class="callout-title"><span class="callout-icon">✓</span>等几秒再调一次</div>
+        <div class="callout-body">
+          <p>降级的同时网关会在<strong>后台补数</strong>。再调一次同一个查询，就直接命中缓存：</p>
+          <div class="code-block" style="margin-bottom:0">
+            <div class="code-head"><span class="code-lang">json</span></div>
+            <pre><code>"cached": true,
+"latency_ms": 1,
+"cache_age_s": 17,
+"degraded": false,
+"count": 2,
+"total": 3471073
+</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <h3>遇到降级怎么办</h3>
+      <ol class="steps">
+        <li>
+          <h3 style="margin-top:0">先重试一次</h3>
+          <p>同一个查询在几秒后再调，通常就命中后台补好的缓存（<code>cached=true</code>、<code>latency_ms</code> 常是 1ms）。这是最省事的路径。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">或者直连上游</h3>
+          <p>拿 <code>meta.fallback.upstream_url</code> 和 <code>meta.fallback.method</code> 直接请求上游。注意官方限速是授权条件，请遵守各源的限速口径。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">或者减小问题规模</h3>
+          <p>减小 <code>limit</code>、减少 <code>params</code>，能降低解析耗时，也更容易挤进预算。响应过大时的提示就是这个意思。</p>
+        </li>
+      </ol>
+
+      <h2>缓存语义</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>项</th><th>行为</th></tr></thead>
+          <tbody>
+            <tr><td>位置</td><td><strong>进程内</strong>内存缓存，不落盘、不跨副本共享；网关重启就是冷缓存</td></tr>
+            <tr><td>风格</td><td>SWR（stale-while-revalidate）：过期条目<strong>仍然可读</strong>，同时后台刷新</td></tr>
+            <tr><td>TTL</td><td>取端点定义的 <code>cache_ttl_s</code>；端点没定义时默认 <code>900</code> 秒</td></tr>
+            <tr><td>热条目</td><td>同一个键被命中 3 次以上，TTL 缩短到 <code>TTL/4</code>（最低 30 秒），让热数据更新更快</td></tr>
+            <tr><td>缓存键</td><td><code>source | endpoint | 上游 URL | params</code>；<code>email</code> 不进键，页大小参数归一成一个有效值</td></tr>
+            <tr><td>不进键的</td><td><code>limit</code> 与 <code>fields</code> —— 它们是网关在解析后做的截断与投影，不影响上游响应</td></tr>
+            <tr><td>容量</td><td>默认 512 条 / 32MB，超了按 LRU 淘汰；单条大于上限的干脆不缓存</td></tr>
+            <tr><td>新鲜命中</td><td><code>cached=true</code>、<code>cache_age_s</code> 是缓存年龄，<code>degraded=false</code></td></tr>
+            <tr><td>过期命中</td><td><code>cached=true</code>、<code>degraded=true</code>、<code>errors[].type="stale"</code>，同时后台刷新</td></tr>
+            <tr><td>只缓存成功的响应</td><td>上游状态码 ≥400 的响应不进缓存</td></tr>
+            <tr><td>观测</td><td><code>GET /v1/stats</code> 的 <code>cache</code> 段：<code>entries</code>、<code>bytes</code>、<code>hits</code>、<code>misses</code>、<code>stale_hits</code>、<code>hit_rate</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        缓存键不含 <code>limit</code> 是个好消息：<code>limit=2</code> 和 <code>limit=50</code>
+        打的是同一个上游请求，只是网关在返回前切得不一样。
+      </p>
+
+      <h2>预算与延迟</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>预算</th><th>值</th><th>留给谁</th></tr></thead>
+          <tbody>
+            <tr><td>客户端可见总预算</td><td><strong>500ms</strong></td><td>上游 + 解析 + 投影 + 序列化，全部加起来</td></tr>
+            <tr><td>上游取数墙钟预算</td><td><strong>400ms</strong></td><td>只给上游那一次 HTTP 调用</td></tr>
+            <tr><td>保留</td><td><strong>100ms</strong></td><td>解析 / 投影 / 序列化 / 框架开销</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li>
+          <strong>实际给上游的超时 = min(端点 <code>budget_ms</code>, 剩余预算)</strong>，最低 50ms。
+          端点自己写 <code>budget_ms: 5000</code> 也<strong>放大不了</strong> 500ms 这个硬上限——
+          那是后台补数用的预算，不是客户端侧的。
+        </li>
+        <li>
+          <strong><code>timeout_ms</code> 会被钳在 ≤500</strong>。把它调小（最小 50）是让网关更早放弃、
+          更早降级；调大无效。
+        </li>
+        <li>
+          <strong>客户端可见耗时超过预算时</strong>：加一条 <code>budget_exceeded</code> 错误、
+          置 <code>degraded=true</code>，并把 <code>data</code> 列表<strong>截到前 5 条</strong>、
+          置 <code>truncated=true</code>。
+        </li>
+        <li>
+          响应头 <code>X-Gateway-Latency-Ms</code> 就是这个客户端可见耗时，和 <code>meta.latency_ms</code> 一致。
+        </li>
+      </ul>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">console</span></div>
+        <pre><code>$ curl -s -D - -o /dev/null -X POST http://127.0.0.1:8848/v1/query \
+    -H 'Content-Type: application/json' \
+    -d '{"source":"gleif_lei","endpoint":"lei_records","params":{"size":2},"limit":2}'
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-Gateway-Latency-Ms: 1
+X-Gateway-Trace-Id: ac9f72d36d8df3283905a136c399b306
+</code></pre>
+      </div>
+
+      <h2>错误类型全表</h2>
+      <p>
+        错误都在 <code>meta.errors[]</code> 里，每一项形如
+        <code>{"type":"timeout","message":"上游超过 400ms 预算, 已降级"}</code>；
+        带上游状态码时多一个 <code>status</code> 字段：
+        <code>{"type":"upstream_error","status":503,"message":"..."}</code>。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>type</th><th>触发条件</th><th>HTTP 码</th><th>典型 message</th></tr></thead>
+          <tbody>
+            <tr><td><code>timeout</code></td><td>上游超过 400ms 预算，或解析用完了剩余预算</td><td><span class="badge ok">200</span></td><td>上游超过 400ms 预算, 已降级</td></tr>
+            <tr><td><code>budget_exceeded</code></td><td>客户端可见耗时超过本次预算</td><td><span class="badge ok">200</span></td><td>客户端可见耗时 520ms 超过预算 500ms</td></tr>
+            <tr><td><code>upstream_error</code></td><td>上游返回 ≥400 的状态码（带 <code>status</code>）</td><td><span class="badge ok">200</span></td><td>上游响应体前 300 字符</td></tr>
+            <tr><td><code>parse_error</code></td><td>上游返回了，但按端点定义解析不出来</td><td><span class="badge ok">200</span></td><td>解析器报错信息（截到 300 字符）</td></tr>
+            <tr><td><code>response_too_large</code></td><td>响应体超过上限被截断，或端点是文件型大响应</td><td><span class="badge ok">200</span></td><td>响应超过 1MB 上限被截断;请减小 limit 或直连上游</td></tr>
+            <tr><td><code>missing_param</code></td><td>缺端点要求的必填参数</td><td><span class="badge ok">200</span></td><td>缺少必填参数 cik</td></tr>
+            <tr><td><code>endpoint_not_found</code></td><td>该源没有这个端点 id</td><td><span class="badge ok">200</span></td><td>gleif_lei 没有端点 xxx</td></tr>
+            <tr><td><code>not_found</code></td><td>源 id 解析不出来</td><td><span class="badge ok">200</span></td><td>未知数据源 xxx</td></tr>
+            <tr><td><code>bad_template</code></td><td>端点的 URL 模板不可用（数据问题）</td><td><span class="badge ok">200</span></td><td>模板错误信息</td></tr>
+            <tr><td><code>contact_required</code></td><td>该源要求 UA 带联系邮箱，但没配 <code>A_GATEWAY_CONTACT</code></td><td><span class="badge ok">200</span></td><td>xxx 要求 User-Agent 里带联系邮箱, 当前未配置(A_GATEWAY_CONTACT)</td></tr>
+            <tr><td><code>offline</code></td><td>网关处于离线模式</td><td><span class="badge ok">200</span></td><td>网关处于离线模式, 仅提供元数据与缓存</td></tr>
+            <tr><td><code>stale</code></td><td>缓存已过期，返回陈旧值并在后台刷新</td><td><span class="badge ok">200</span></td><td>缓存已过期 1200s, 返回陈旧值并在后台刷新</td></tr>
+            <tr><td><code>internal_error</code></td><td>网关内部错误（panic 已被中间件兜住）</td><td><span class="badge ok">200</span></td><td>网关内部错误: ...</td></tr>
+            <tr><td><code>ConnectError</code></td><td>DNS 解析失败 / 连接被拒 / TLS 证书问题</td><td><span class="badge ok">200</span></td><td>传输层错误信息</td></tr>
+            <tr><td><code>ReadError</code></td><td>连接被重置 / 读取中断</td><td><span class="badge ok">200</span></td><td>传输层错误信息</td></tr>
+            <tr><td><code>UpstreamError</code></td><td>其它传输层故障</td><td><span class="badge ok">200</span></td><td>传输层错误信息</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        最后三个是<strong>传输层</strong>的名字（Python 参照实现用 <code>type(e).__name__</code>，
+        Go 网关映射到同样的名字）。它们的处置和 <code>timeout</code> 一样：看 <code>fallback</code>，稍后重试。
+      </p>
+      <div class="callout info">
+        <div class="callout-title"><span class="callout-icon">i</span>请求层错误不在信封里</div>
+        <div class="callout-body">
+          <p>
+            <span class="badge warn">400</span> / <span class="badge warn">422</span> /
+            <span class="badge danger">404</span> / <span class="badge danger">500</span> 这些是
+            <strong>请求层</strong>失败，响应体只有 <code>{"detail": ...}</code>，没有 <code>meta</code>。
+            处理顺序：先判 HTTP 状态码，再判 <code>meta.degraded</code>，最后才读 <code>data</code>。
+          </p>
+        </div>
+      </div>
+
+      <h2>trace id 与排查</h2>
+      <p>
+        网关给每个请求一个 <code>trace_id</code>，它同时出现在<strong>响应体</strong>
+        （<code>meta.trace_id</code>）、<strong>响应头</strong>（<code>X-Gateway-Trace-Id</code>）和
+        <strong>网关日志</strong>里。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>方向</th><th>头</th><th>行为</th></tr></thead>
+          <tbody>
+            <tr><td>入站</td><td><code>X-Gateway-Trace-Id</code> 或 <code>X-Request-Id</code></td><td>带了非空值就<strong>复用</strong>成这次的 trace id，你的日志和网关日志就能对上一条</td></tr>
+            <tr><td>入站</td><td>都没带</td><td>随机生成一个 32 位 hex</td></tr>
+            <tr><td>出站</td><td><code>X-Gateway-Trace-Id</code></td><td>回显本次 trace id（查询接口与 4xx 错误都有）</td></tr>
+            <tr><td>出站</td><td><code>X-Gateway-Latency-Ms</code></td><td>客户端可见耗时（毫秒）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># 带上自己的 trace id，出问题时拿它去查网关日志
+curl -s -D - -X POST http://127.0.0.1:8848/v1/query \
+  -H 'Content-Type: application/json' \
+  -H 'X-Gateway-Trace-Id: my-trace-20261024-001' \
+  -d '{"source":"gleif_lei","endpoint":"lei_records","params":{"size":2},"limit":2}'
+</code></pre>
+      </div>
+      <p>排查顺序：</p>
+      <ol class="steps">
+        <li>
+          <h3 style="margin-top:0">先看 HTTP 状态码</h3>
+          <p>非 200 → 请求层问题，看 <code>detail</code>：422 是参数写错了，404 是源或端点 id 不存在，400 是 GET 的 <code>params</code> 不是合法 JSON。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">再看 meta.degraded</h3>
+          <p>200 + <code>degraded=true</code> → 业务层降级，看 <code>meta.errors[].type</code> 判断原因，看 <code>meta.fallback</code> 决定重试还是直连。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">最后看耗时</h3>
+          <p><code>meta.latency_ms</code> 接近 <code>meta.budget_ms</code> 说明卡在预算上；<code>meta.upstream.latency_ms</code> 大而 <code>meta.latency_ms</code> 也大，说明时间花在上游；上游快但总耗时长，说明时间花在解析。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">拿 trace id 去查日志</h3>
+          <p><code>meta.trace_id</code>（或你传进去的那个）就是网关日志里的关联键。</p>
+        </li>
+      </ol>
+      <div class="callout info">
+        <div class="callout-title"><span class="callout-icon">i</span>422 不带 trace 响应头</div>
+        <div class="callout-body">
+          <p>
+            参数校验失败（422）的响应只写 <code>{"detail":[...]}</code>，不带
+            <code>X-Gateway-Trace-Id</code> 响应头；它是你自己请求写错了，日志里也未必有记录，
+            改参数就行。
+          </p>
+        </div>
+      </div>
+
+      <h2>接入建议</h2>
+      <p>把"HTTP 层错误"和"业务层降级"分成两层处理，就不会被降级打懵：</p>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">python</span></div>
+        <pre><code>import uuid
+import requests
+
+GATEWAY = "http://127.0.0.1:8848"
+
+
+def query(source, endpoint, params=None, fields=None, limit=20, timeout_ms=500):
+    trace_id = uuid.uuid4().hex
+    resp = requests.post(
+        f"{GATEWAY}/v1/query",
+        json={
+            "source": source,
+            "endpoint": endpoint,
+            "params": params or {},
+            "fields": fields or [],
+            "limit": limit,
+            "timeout_ms": timeout_ms,
+        },
+        headers={"X-Gateway-Trace-Id": trace_id},
+        timeout=timeout_ms / 1000 + 0.5,
+    )
+
+    # 第一层: 请求层错误(4xx/5xx)—— 参数写错、源不存在
+    resp.raise_for_status()
+
+    env = resp.json()
+    meta = env["meta"]
+
+    # 第二层: 业务层降级 —— 200 但数据不完整
+    if meta["degraded"]:
+        reason = meta["errors"][0]["type"] if meta["errors"] else "unknown"
+        # fallback 里给你了直连上游的 URL 和提示
+        print(f"[degraded:{reason}] trace={meta['trace_id']} fallback={meta['fallback']}")
+
+    # 第三层: 结果本身
+    return env["data"], meta
+</code></pre>
+      </div>
+      <div class="code-block">
+        <div class="code-head"><span class="code-lang">bash</span></div>
+        <pre><code># shell 里最简的判断:只看 degraded 字段
+curl -s -X POST http://127.0.0.1:8848/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"gleif_lei","endpoint":"lei_records","params":{"size":2},"limit":2}' \
+  | python3 -c 'import json,sys; e=json.load(sys.stdin); m=e["meta"]; print("degraded" if m["degraded"] else "ok", m["cached"], m["count"], m["trace_id"])'
+</code></pre>
+      </div>
+      <ul>
+        <li><strong>给每个请求带自己的 trace id</strong>：出问题时能直接在自己的日志和网关日志之间对上。</li>
+        <li><strong>先读 <code>meta</code> 再读 <code>data</code></strong>：不要假设 <code>data</code> 非空。</li>
+        <li><strong>降级时优先重试</strong>，别急着自己直连上游——直连要遵守官方限速口径。</li>
+        <li><strong>缓存是进程内的</strong>：不要假设另一个副本能命中你这边热过的条目。</li>
+        <li><strong>大批量取数走批量文件</strong>，不要靠调接口硬凑——限速与预算都是授权条件。</li>
+      </ul>
+
+      <h2>下一步</h2>
+      <div class="card-grid">
+        <a class="card" href="api.html">
+          <div class="card-title">API 参考</div>
+          <div class="card-desc">13 条路由的参数、响应结构、状态码、错误码与可复制的 curl。</div>
+        </a>
+        <a class="card" href="debug.html">
+          <div class="card-title">API 调试台</div>
+          <div class="card-desc">在浏览器里把这次降级复现出来，顺手看看 meta 里每个字段。</div>
+        </a>
+        <a class="card" href="mcp.html">
+          <div class="card-title">MCP 集成</div>
+          <div class="card-desc">让 AI 智能体按这套语义消费信封：5 个 MCP 工具，优先走 Go 网关。</div>
+        </a>
+        <a class="card" href="index.html">
+          <div class="card-title">回到首页</div>
+          <div class="card-desc">五分钟跑通第一个查询，以及这个网关替你做了什么。</div>
+        </a>
+      </div>
+
+    </div>
+
+    <nav class="pager" id="pager"></nav>
+
+    <footer class="page-footer">
+      <span>a-source-gateway 文档 · MIT License</span>
+      <span><a href="https://github.com/hamr-hub/a-source-gateway">GitHub 仓库</a> · <a href="index.html">回到首页</a></span>
+    </footer>
+  </main>
+
+  <nav class="toc" id="toc"></nav>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

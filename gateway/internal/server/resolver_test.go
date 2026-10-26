@@ -680,3 +680,62 @@ func TestRenderDropsUnsetPlaceholders(t *testing.T) {
 		t.Errorf("url = %q", url)
 	}
 }
+
+// A cache hit must serve the same records as the first call.
+//
+// The cache used to store the parse result wrapper instead of the projected
+// payload, so every cache hit answered with an empty object (the wrapper has
+// no exported fields). The first call looked fine, the second one looked like
+// the source had no data at all.
+func TestCacheHitReturnsTheSameRecords(t *testing.T) {
+	r := newTestResolver(t, jsonHandler(`{"message":{"total-results":2,"items":[{"a":1,"b":2},{"a":3,"b":4}]}}`))
+	req := QueryRequest{Source: "crossref", Endpoint: "works",
+		Params: params("filter", "x"), Limit: 20, TimeoutMS: 500}
+
+	first := r.Query(req, nil)
+	if first.Meta.Degraded {
+		t.Fatalf("degraded: %+v", first.Meta.Errors)
+	}
+	second := r.Query(req, nil)
+	if !second.Meta.Cached {
+		t.Fatalf("the second call must hit the cache: %+v", second.Meta.Errors)
+	}
+	firstItems, ok := first.Data.([]any)
+	if !ok || len(firstItems) == 0 {
+		t.Fatalf("first call returned no records: %#v", first.Data)
+	}
+	secondItems, ok := second.Data.([]any)
+	if !ok || len(secondItems) != len(firstItems) {
+		t.Fatalf("cache hit lost the records: first=%#v second=%#v", first.Data, second.Data)
+	}
+	if second.Meta.Count != first.Meta.Count {
+		t.Errorf("count = %d, want %d", second.Meta.Count, first.Meta.Count)
+	}
+}
+
+// An upstream that answers 200 with an empty payload must not stay cached
+// for the whole endpoint TTL: the caller would keep getting an empty shell.
+func TestEmptyUpstreamResultIsNotCachedForLong(t *testing.T) {
+	r := newTestResolver(t, jsonHandler(`{"message":{"total-results":0,"items":[]}}`))
+	req := QueryRequest{Source: "crossref", Endpoint: "works",
+		Params: params("filter", "x"), Limit: 20, TimeoutMS: 500}
+
+	r.Query(req, nil)
+	// The entry must expire quickly: an empty upstream answer under load must
+	// not pin an empty shell for the whole endpoint TTL.
+	var found bool
+	for key, entry := range r.cache.Entries() {
+		if key == "" {
+			continue
+		}
+		if cv := toCacheValue(entry.Value); cv != nil && isEmptyPayload(cv.Data) {
+			found = true
+			if ttl := time.Until(entry.ExpiresAt); ttl > emptyPayloadTTLSeconds*time.Second {
+				t.Errorf("an empty result must use the short TTL, got %v", ttl)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no empty entry in the cache, want a short lived one")
+	}
+}

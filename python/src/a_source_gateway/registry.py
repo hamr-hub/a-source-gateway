@@ -194,6 +194,7 @@ def build_endpoint(d: dict[str, Any]) -> EndpointSpec:
             fields=[FieldSpec(**f) for f in resp.get("fields", [])],
             item_path=resp.get("item_path"),
             item_shape=resp.get("item_shape", "list"),
+            item_flatten=bool(resp.get("item_flatten", False)),
             total_field=resp.get("total_field"),
             notes=resp.get("notes", ""),
         ),
@@ -367,7 +368,7 @@ def build_registry(cfg: Config | None = None) -> dict[str, Any]:
         ))
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "generated_at": "2026-10-22",
         "budget_ms": cfg.budget_ms,
         "count": len(sources),

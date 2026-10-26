@@ -30,7 +30,7 @@ from .cache import BoundedCache
 from .config import load_config
 from .registry import build_registry
 from .resolver import LATENCY_BUCKETS_MS, Resolver
-from .schema import DEFAULT_BUDGET_MS, QueryRequest
+from .schema import DEFAULT_BUDGET_MS, SCHEMA_VERSION, QueryRequest
 
 CFG = load_config()
 OFFLINE = CFG.offline
@@ -228,7 +228,7 @@ async def list_sources(family: str = Query("", description="按分类过滤, 模
     r = _r()
     items = r.list_sources(family=family, q=q)
     return {"meta": {"count": len(items), "family": family, "q": q,
-                      "latency_ms": 0, "schema_version": "1.0"},
+                      "latency_ms": 0, "schema_version": SCHEMA_VERSION},
             "data": items[:limit],
             "fields": ["id", "name", "family", "org", "country", "summary",
                        "link_status", "scale", "endpoint_count"]}
@@ -240,7 +240,7 @@ async def get_source(source_id: str) -> dict[str, Any]:
     s = r.get_source(source_id)
     if not s:
         raise HTTPException(status_code=404, detail=f"未知源 {source_id}")
-    return {"meta": {"source": source_id, "schema_version": "1.0"}, "data": s}
+    return {"meta": {"source": source_id, "schema_version": SCHEMA_VERSION}, "data": s}
 
 
 @app.get("/v1/sources/{source_id}/endpoints/{endpoint_id}")
@@ -249,7 +249,7 @@ async def describe_endpoint(source_id: str, endpoint_id: str) -> dict[str, Any]:
     d = r.describe(source_id, endpoint_id)
     if not d:
         raise HTTPException(status_code=404, detail=f"未知端点 {source_id}/{endpoint_id}")
-    return {"meta": {"source": source_id, "endpoint": endpoint_id, "schema_version": "1.0"},
+    return {"meta": {"source": source_id, "endpoint": endpoint_id, "schema_version": SCHEMA_VERSION},
             "data": d}
 
 
@@ -308,7 +308,7 @@ async def query_get(source: str = Query(...), endpoint: str = Query(...),
 
 
 SCHEMA_DOC: dict[str, Any] = {
-    "schema_version": "1.0",
+    "schema_version": SCHEMA_VERSION,
     "description": "A 类数据源网关 meta 规范。描述数据源、可调用端点, 以及一次请求的请求/响应元数据。",
     "source_spec": {
         "id": "字符串, 稳定标识",
@@ -342,9 +342,11 @@ SCHEMA_DOC: dict[str, Any] = {
                     "default": "默认值", "example": "示例值"}],
         "response": {"media_type": "响应类型", "shape": "object|array|csv|xml|tsv|text",
                      "fields": [{"name": "字段名", "type": "类型", "desc": "说明", "path": "位置"}],
-                     "item_path": "列表数据所在路径", "total_field": "总数所在路径", "notes": "说明"},
+                     "item_path": "列表数据所在路径(支持数字下标, 如 0.data)",
+                     "item_flatten": "布尔, 列表套列表时展平一层(如 pageHelp.data)",
+                     "total_field": "总数所在路径", "notes": "说明"},
         "cache_ttl_s": "缓存秒数",
-        "budget_ms": "该端点允许的上游超时预算(默认 450, 总预算 500)",
+        "budget_ms": "该端点允许的上游超时预算(默认 400, 总预算 500; 取 min(端点预算, 剩余预算))",
         "notes": "坑位说明",
     },
     "request": {

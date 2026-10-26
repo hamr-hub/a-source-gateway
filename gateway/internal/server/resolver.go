@@ -44,6 +44,12 @@ const CacheBuster = "_cb"
 // every call degrades — for that long after a restart.
 const PrewarmConcurrency = 6
 
+// emptyPayloadTTLSeconds caps how long an empty upstream result stays cached.
+// An upstream that answers 200 with an empty payload under load (seen with the
+// SZSE list endpoint during prewarm) must not poison the cache for the whole
+// endpoint TTL: the caller would get an empty shell for hours.
+const emptyPayloadTTLSeconds = 30
+
 var placeholderRe = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
 
 // MissingParamError reports a missing required parameter.
@@ -453,11 +459,19 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 
 	if status < 400 {
 		ttl := r.adaptiveTTL(ep, cacheKey)
+		if isEmptyPayload(payload.data) {
+			// 空结果只短暂缓存: 上游在高并发下(例如预热同时打几十个源)偶尔返回
+			// 200 + 空数据, 缓存下来会让调用方在 TTL 内一直拿到空壳。
+			// 30 秒后自愈, 且下一次调用会重新取数。
+			if ttl > emptyPayloadTTLSeconds {
+				ttl = emptyPayloadTTLSeconds
+			}
+		}
 		// The cache write serialises the whole payload. When the budget is
 		// already used up, the background refresh fills the entry instead
 		// of pushing the call past its deadline.
 		if time.Now().Before(deadline) {
-			r.cache.Put(cacheKey, &cacheValue{Data: payload, Status: status, Total: payload.total, Truncated: payload.truncated}, ttl)
+			r.cache.Put(cacheKey, &cacheValue{Data: payload.data, Status: status, Total: payload.total, Truncated: payload.truncated}, ttl)
 		} else {
 			r.scheduleWarm(ep, epKey, url, cacheKey)
 		}
@@ -492,13 +506,14 @@ type parseResult struct {
 // the budget.
 func (r *Resolver) parse(ctx context.Context, ep *registry.EndpointSpec, body []byte, traceID string) (*parseResult, error) {
 	spec := parser.Spec{
-		ItemPath:   ep.Response.ItemPath,
-		TotalField: ep.Response.TotalField,
-		ItemShape:  ep.Response.ItemShape,
-		Limit:      0, // the gateway applies the limit itself, see Trim
-		Fields:     nil,
-		MaxRows:    r.cfg.MaxParseRows,
-		TraceID:    traceID,
+		ItemPath:    ep.Response.ItemPath,
+		TotalField:  ep.Response.TotalField,
+		ItemShape:   ep.Response.ItemShape,
+		ItemFlatten: ep.Response.ItemFlatten,
+		Limit:       0, // the gateway applies the limit itself, see Trim
+		Fields:      nil,
+		MaxRows:     r.cfg.MaxParseRows,
+		TraceID:     traceID,
 	}
 	res, err := r.parsers.Parse(ctx, ep.Response.Shape, ep.Response.MediaType, body, spec)
 	if err != nil {
@@ -706,6 +721,12 @@ func (r *Resolver) scheduleWarm(ep *registry.EndpointSpec, epKey, url, cacheKey 
 			cancel()
 			if perr == nil {
 				ttl := r.adaptiveTTL(ep, cacheKey)
+				// The background refresh must apply the same short TTL to an
+				// empty payload, otherwise the empty shell it fetched would
+				// be pinned for the whole endpoint TTL.
+				if isEmptyPayload(payload.data) && ttl > emptyPayloadTTLSeconds {
+					ttl = emptyPayloadTTLSeconds
+				}
 				r.cache.Put(cacheKey, &cacheValue{Data: payload.data, Status: res.Status, Total: payload.total, Truncated: payload.truncated}, ttl)
 			} else {
 				r.metrics.WarmError(fmt.Sprintf("%s: %v", epKey, perr))
@@ -1192,6 +1213,22 @@ func countOf(data any) int {
 		return 0
 	default:
 		return 1
+	}
+}
+
+// isEmptyPayload reports whether an upstream payload carries no records.
+// An empty object (the shape a top level array payload degrades to) counts
+// as empty too, because it holds no usable record either.
+func isEmptyPayload(data any) bool {
+	switch t := data.(type) {
+	case nil:
+		return true
+	case []any:
+		return len(t) == 0
+	case *parser.Object:
+		return len(t.Keys()) == 0
+	default:
+		return false
 	}
 }
 

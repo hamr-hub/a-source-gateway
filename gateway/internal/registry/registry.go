@@ -35,7 +35,7 @@ const (
 
 // Document level constants of the Python reference.
 const (
-	SchemaVersion      = "1.0"
+	SchemaVersion      = "1.1"
 	GeneratedAt        = "2026-10-22"
 	DefaultCacheTTLS   = 900
 	DefaultBudgetMS    = 400
@@ -269,12 +269,13 @@ func buildEndpoint(d *parser.Object) (*EndpointSpec, error) {
 	if resp, ok := d.Get("response"); ok {
 		if ro, ok := resp.(*parser.Object); ok {
 			ep.Response = ResponseSpec{
-				MediaType:  objString(ro, "media_type", "application/json"),
-				Shape:      objString(ro, "shape", "object"),
-				ItemPath:   objString(ro, "item_path", ""),
-				ItemShape:  objString(ro, "item_shape", "list"),
-				TotalField: objString(ro, "total_field", ""),
-				Notes:      objString(ro, "notes", ""),
+				MediaType:   objString(ro, "media_type", "application/json"),
+				Shape:       objString(ro, "shape", "object"),
+				ItemPath:    objString(ro, "item_path", ""),
+				ItemShape:   objString(ro, "item_shape", "list"),
+				ItemFlatten: objBool(ro, "item_flatten"),
+				TotalField:  objString(ro, "total_field", ""),
+				Notes:       objString(ro, "notes", ""),
 			}
 			if fields, ok := ro.Get("fields"); ok {
 				if list, ok := fields.([]any); ok {

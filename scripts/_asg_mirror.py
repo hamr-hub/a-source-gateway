@@ -210,7 +210,7 @@ def _load_registry_local(ddir: Path | None) -> dict[str, Any]:
             "ua_requires_contact": any(k in blob for k in ("邮箱", "mailto", "UA")),
             "endpoints": eps,
         })
-    return {"schema_version": "1.0", "count": len(sources), "families": [], "sources": sources}
+    return {"schema_version": "1.1", "count": len(sources), "families": [], "sources": sources}
 
 
 # ── 源解析(与 Resolver.resolve_source 一致) ──────────────────────────────
@@ -357,15 +357,34 @@ def project(payload: Any, ep: dict, limit: int = 20, fields: list[str] | None = 
     data: Any = payload
     if resp.get("item_shape") == "map" and isinstance(payload, dict):
         data = list(payload.values())
-    elif item_path and isinstance(payload, dict):
-        node = payload
-        for part in item_path.split("."):
-            if isinstance(node, dict):
-                node = node.get(part)
-            else:
-                node = None
-                break
-        data = node if node is not None else []
+    elif item_path:
+        # 顶层是数组时: 路径首段是数字才按下标定位(如 "0.data");
+        # 否则保持整个数组(旧行为, 不能让"顶层数组"变成空列表)。
+        head = item_path.split(".")[0]
+        if isinstance(payload, dict) or head.isdigit():
+            node = payload
+            for part in item_path.split("."):
+                if isinstance(node, dict):
+                    node = node.get(part)
+                elif isinstance(node, list) and part.isdigit():
+                    idx = int(part)
+                    node = node[idx] if idx < len(node) else None
+                else:
+                    node = None
+                    break
+            data = node if node is not None else []
+        else:
+            data = payload
+        if resp.get("item_flatten") and isinstance(data, list) and data \
+                and isinstance(data[0], list):
+            # 列表套列表(如上交所公告 pageHelp.data): 展平一层
+            flat: list[Any] = []
+            for sub in data:
+                if isinstance(sub, list):
+                    flat.extend(sub)
+                else:
+                    flat.append(sub)
+            data = flat
 
     truncated = False
     if isinstance(data, list):

@@ -79,6 +79,22 @@ LATENCY_BUCKETS_MS = (10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 2000, 5000
 PAGE_SIZE_PARAMS = {"size", "rows", "per_page", "per-page", "page_size", "pageSize"}
 
 
+# 空结果只短暂缓存: 上游在高并发下偶尔返回 200 + 空载荷,
+# 缓存下来会让调用方在 TTL 内一直拿到空壳。30 秒后自愈。
+EMPTY_PAYLOAD_TTL_SECONDS = 30
+
+
+def _is_empty_payload(payload: Any) -> bool:
+    """载荷里没有可用记录(空列表/空对象/None)。"""
+    if payload is None:
+        return True
+    if isinstance(payload, list):
+        return len(payload) == 0
+    if isinstance(payload, dict):
+        return len(payload) == 0
+    return False
+
+
 class Resolver:
     # 后台补数用的长预算(不影响用户请求的 500ms 承诺)
     WARM_BUDGET_MS = 15000   # 默认值, 运行期以 Config.warm_budget_ms 为准
@@ -362,6 +378,8 @@ class Resolver:
                 return ResponseEnvelope(meta=meta, data=data, fields=req.fields)
             if status < 400:          # 只缓存成功响应
                 ttl = self._adaptive_ttl(ep, cache_key)
+                if _is_empty_payload(payload) and ttl > EMPTY_PAYLOAD_TTL_SECONDS:
+                    ttl = EMPTY_PAYLOAD_TTL_SECONDS
                 self.cache.put(cache_key, {"_data": payload, "_status": status}, ttl)
             data, total, truncated = self._project(payload, ep, req)
             meta.count = len(data) if isinstance(data, list) else (1 if data is not None else 0)
@@ -503,6 +521,9 @@ class Resolver:
                     return
                 if status < 400:
                     ttl = self._adaptive_ttl(ep, cache_key)
+                    # 后台补数与用户请求用同一把尺子: 空结果不钉死整个 TTL
+                    if _is_empty_payload(payload) and ttl > EMPTY_PAYLOAD_TTL_SECONDS:
+                        ttl = EMPTY_PAYLOAD_TTL_SECONDS
                     self.cache.put(cache_key, {"_data": payload, "_status": status}, ttl)
                 self.warm_fills += 1
                 self.metrics["warm_fills_total"] += 1
@@ -731,9 +752,25 @@ class Resolver:
         data: Any = payload
         if resp.get("item_shape") == "map" and isinstance(payload, dict):
             data = list(payload.values())          # 形如 {"0": {...}, "1": {...}}
-        elif item_path and isinstance(payload, dict):
-            node = _dig_path(payload, item_path)
-            data = node if node is not None else []
+        elif item_path:
+            # 顶层是数组时: 路径首段是数字才按下标定位(如 "0.data");
+            # 否则保持整个数组(旧行为, 不能让"顶层数组"变成空列表)。
+            head = item_path.split(".")[0]
+            if isinstance(payload, dict) or head.isdigit():
+                node = _dig_path(payload, item_path)
+                data = node if node is not None else []
+            else:
+                data = payload
+            if resp.get("item_flatten") and isinstance(data, list) and data \
+                    and isinstance(data[0], list):
+                # 列表套列表(如上交所公告 pageHelp.data): 展平一层
+                flat: list[Any] = []
+                for sub in data:
+                    if isinstance(sub, list):
+                        flat.extend(sub)
+                    else:
+                        flat.append(sub)
+                data = flat
 
         truncated = False
         if isinstance(data, list):
@@ -746,7 +783,9 @@ class Resolver:
                 truncated = True     # 上游页取满且还有更多, 调用方可按需翻页
             if req.fields and data and isinstance(data[0], dict):
                 keep = set(req.fields)
-                data = [{k: v for k, v in row.items() if k in keep} for row in data]
+                # 非字典行原样保留(与 parser worker / Go 引擎一致), 不抛错
+                data = [{k: v for k, v in row.items() if k in keep}
+                        if isinstance(row, dict) else row for row in data]
         elif isinstance(payload, dict) and "_xml" in payload:
             data = {"_xml_bytes": len(payload["_xml"].encode("utf-8")),
                     "_truncated": len(payload["_xml"]) >= JSON_LIMIT_BYTES}

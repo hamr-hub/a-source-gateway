@@ -1,0 +1,1461 @@
+/* ============================================================================
+   a-source-gateway 文档站 —— 设计系统
+   ----------------------------------------------------------------------------
+   零外部依赖:不引 CDN、不引字体服务、不用构建工具。
+   理由:文档站是"上手第一站",必须离线可读、零供应链风险、能直接丢进任何静态托管。
+
+   主题:跟随系统 + 手动覆盖(存 localStorage),class="dark" 挂在 <html> 上。
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo,
+    Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", monospace;
+
+  /* 表面 */
+  --bg: #f6f8fa;
+  --bg-elevated: #ffffff;
+  --bg-sunken: #eef1f5;
+  --bg-code: #f2f5f8;
+  --bg-hover: rgba(9, 30, 66, 0.045);
+  --bg-active: rgba(9, 30, 66, 0.08);
+
+  /* 文字 */
+  --fg: #1b2530;
+  --fg-strong: #0d1620;
+  --fg-muted: #5a6a7d;
+  --fg-faint: #8493a5;
+
+  /* 线 */
+  --border: #dde3ea;
+  --border-strong: #c6d0da;
+
+  /* 主色 */
+  --accent: #0f6fb8;
+  --accent-strong: #0a558d;
+  --accent-soft: rgba(15, 111, 184, 0.1);
+  --accent-border: rgba(15, 111, 184, 0.32);
+
+  /* 语义色 */
+  --ok: #1a7f47;
+  --ok-soft: rgba(26, 127, 71, 0.1);
+  --warn: #9a6200;
+  --warn-soft: rgba(154, 98, 0, 0.1);
+  --danger: #b3261e;
+  --danger-soft: rgba(179, 38, 30, 0.09);
+  --info: #4b5fc7;
+  --info-soft: rgba(75, 95, 199, 0.1);
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 4px 16px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 40px rgba(16, 24, 40, 0.14);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --topbar-h: 56px;
+  --sidebar-w: 268px;
+  --toc-w: 224px;
+  --content-max: 860px;
+
+  --font-size-base: 15.5px;
+  --line-height: 1.72;
+}
+
+html.dark {
+  color-scheme: dark;
+
+  --bg: #0d1117;
+  --bg-elevated: #141b23;
+  --bg-sunken: #10161d;
+  --bg-code: #171e26;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.09);
+
+  --fg: #d5dde5;
+  --fg-strong: #f0f4f8;
+  --fg-muted: #8b98a6;
+  --fg-faint: #6b7683;
+
+  --border: #262e38;
+  --border-strong: #39424e;
+
+  --accent: #56b3f5;
+  --accent-strong: #7cc6fa;
+  --accent-soft: rgba(86, 179, 245, 0.13);
+  --accent-border: rgba(86, 179, 245, 0.35);
+
+  --ok: #4ac07d;
+  --ok-soft: rgba(74, 192, 125, 0.12);
+  --warn: #e0a53c;
+  --warn-soft: rgba(224, 165, 60, 0.12);
+  --danger: #f4756b;
+  --danger-soft: rgba(244, 117, 107, 0.12);
+  --info: #8d9bea;
+  --info-soft: rgba(141, 155, 234, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* ── 基础 ─────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+img {
+  max-width: 100%;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+kbd {
+  display: inline-block;
+  padding: 0.1em 0.45em;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-size: 0.8em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* ── 顶栏 ─────────────────────────────────────────────────────────────── */
+
+/* 顶栏
+   刻意**不用 position: sticky**。
+   实测现象: 在本机 IDE 内置的 Electron 浏览器(软件渲染路径)上,
+   顶层布局元素一旦用 sticky, 整页就只画出局部 —— 视口下半截白屏、侧栏消失、
+   整页截图直接超时。同一份页面在 Chrome/Safari/Firefox 上完全正常。
+   这是**那一条渲染路径的实测现象**, 不是 CSS 定律(sticky 本身没问题);
+   但文档站是"第一站", 宁可少一点粘性, 也要在每种渲染环境里都完整可读。
+   —— 若要恢复吸顶, 先在 Electron 里验一遍。
+
+   顶栏同样**不加 backdrop-filter 毛玻璃**: 软件渲染路径下它会明显拖慢合成,
+   收益却只有一点点观感差异。 */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: var(--topbar-h);
+  padding: 0 20px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 650;
+  font-size: 15px;
+  color: var(--fg-strong);
+  white-space: nowrap;
+}
+
+.brand:hover {
+  text-decoration: none;
+}
+
+.brand svg {
+  flex: none;
+}
+
+.brand .brand-sub {
+  color: var(--fg-faint);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+  border-color: var(--border);
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.nav-toggle {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .nav-toggle {
+    display: inline-flex;
+  }
+  .brand .brand-sub {
+    display: none;
+  }
+}
+
+/* ── 顶栏搜索 ─────────────────────────────────────────────────────────── */
+
+.search-wrap {
+  position: relative;
+}
+
+.search-input {
+  width: 210px;
+  padding: 6px 30px 6px 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13.5px;
+  transition: width 0.18s ease, border-color 0.15s, box-shadow 0.15s;
+}
+
+.search-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.search-input:focus {
+  width: 280px;
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+
+.search-kbd {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .search-input {
+    width: 150px;
+  }
+  .search-input:focus {
+    width: 190px;
+  }
+  .search-kbd {
+    display: none;
+  }
+}
+
+/* 搜索结果面板 */
+.search-results {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: min(420px, 88vw);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.search-results[hidden] {
+  display: none;
+}
+
+.search-hit {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+}
+
+.search-hit:hover,
+.search-hit.is-active {
+  background: var(--accent-soft);
+  text-decoration: none;
+}
+
+.search-hit-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg-strong);
+}
+
+.search-hit-path {
+  font-size: 12px;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+}
+
+.search-hit-snippet {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.search-empty {
+  padding: 14px 12px;
+  color: var(--fg-muted);
+  font-size: 13.5px;
+  text-align: center;
+}
+
+/* ── 布局 ─────────────────────────────────────────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--toc-w);
+  align-items: start;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.sidebar {
+  padding: 22px 12px 40px 20px;
+  border-right: 1px solid var(--border);
+}
+/* 侧栏同样不用 sticky(见 .topbar 的注释), 也不要用
+   height: calc(100vh - ...) + overflow-y: auto 的组合 ——
+   「sticky + 视口定高 + 内部滚动容器」在 Electron 上会把绘制区域裁到侧栏高度。 */
+
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.nav-group {
+  margin-bottom: 20px;
+}
+
+.nav-group-title {
+  padding: 0 10px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 1px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.nav-link:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+  text-decoration: none;
+}
+
+.nav-link.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.nav-link.is-active::before {
+  content: "";
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  background: var(--accent);
+  margin-left: -10px;
+  margin-right: 7px;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .toc {
+    display: none;
+  }
+  .sidebar {
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
+    z-index: 35;
+    width: min(300px, 86vw);
+    background: var(--bg-elevated);
+    transform: translateX(-102%);
+    transition: transform 0.22s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: var(--topbar-h) 0 0;
+    z-index: 34;
+    background: rgba(8, 12, 20, 0.45);
+  }
+  .sidebar-backdrop[hidden] {
+    display: none;
+  }
+}
+
+/* ── 正文 ─────────────────────────────────────────────────────────────── */
+
+.content {
+  min-width: 0;
+  padding: 34px 40px 90px;
+}
+
+.doc {
+  max-width: var(--content-max);
+}
+
+/* 右栏目录 */
+.toc {
+  padding: 30px 20px 40px 8px;
+}
+
+.toc-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin-bottom: 8px;
+}
+
+.toc a {
+  display: block;
+  padding: 3px 10px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  /* 目录里会出现 /v1/sources/{source_id}/endpoints/{endpoint_id} 这种长路径,
+     不允许在中间断开就会溢出屏幕被裁掉。 */
+  overflow-wrap: anywhere;
+}
+
+.toc a:hover {
+  color: var(--fg-strong);
+  text-decoration: none;
+  border-left-color: var(--border-strong);
+}
+
+.toc a.is-active {
+  color: var(--accent-strong);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+.toc a.toc-l3 {
+  padding-left: 22px;
+  font-size: 12.5px;
+}
+
+@media (min-width: 901px) and (max-width: 1240px) {
+  .layout {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  }
+  .toc {
+    display: none;
+  }
+}
+
+/* ── 标题 ─────────────────────────────────────────────────────────────── */
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--fg-strong);
+  font-weight: 680;
+  line-height: 1.32;
+  letter-spacing: -0.012em;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: 2.05rem;
+}
+
+h2 {
+  margin: 52px 0 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 1.5rem;
+}
+
+h3 {
+  margin: 34px 0 12px;
+  font-size: 1.16rem;
+}
+
+h4 {
+  margin: 24px 0 8px;
+  font-size: 1rem;
+}
+
+.doc > h2:first-of-type,
+.doc > h3:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.lede {
+  margin: 0 0 28px;
+  font-size: 1.06rem;
+  color: var(--fg-muted);
+  line-height: 1.65;
+}
+
+.anchor {
+  margin-left: 0.4em;
+  /* 用 color 透明而不是 opacity —— opacity < 1 会给每个标题额外造一层绘制,
+     在 Electron 这类软件渲染的路径上会明显拖慢整页绘制。 */
+  color: transparent;
+  font-weight: 400;
+  transition: color 0.15s;
+}
+
+h2:hover .anchor,
+h3:hover .anchor,
+h4:hover .anchor {
+  color: var(--fg-faint);
+}
+
+p {
+  margin: 0 0 14px;
+}
+
+ul,
+ol {
+  margin: 0 0 16px;
+  padding-left: 1.5em;
+}
+
+li {
+  margin-bottom: 5px;
+}
+
+li > ul,
+li > ol {
+  margin-top: 5px;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 40px 0;
+}
+
+strong {
+  color: var(--fg-strong);
+  font-weight: 650;
+}
+
+/* ── 表格 ─────────────────────────────────────────────────────────────── */
+
+.table-wrap {
+  margin: 0 0 20px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 9px 13px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+thead th {
+  background: var(--bg-sunken);
+  color: var(--fg-strong);
+  font-weight: 640;
+  font-size: 13px;
+  white-space: nowrap;
+}
+/* 注意: 这里**不能**给 thead th 加 position: sticky。
+   .table-wrap 是 overflow-x: auto 的滚动容器, 表头再叠一层 sticky
+   会让 Chromium 进入无限布局循环 —— 表现为整页白屏、导航卡死几十秒。
+   (这一条在 Chrome 上也复现, 不是某条渲染路径的怪癖。)
+   表格本身不长, 不值得为它冒这个险。 */
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+td code,
+th code {
+  white-space: nowrap;
+}
+
+/* ── 代码块 ───────────────────────────────────────────────────────────── */
+
+/* 代码块
+   这里不用 overflow: hidden 做圆角裁剪, 改成头部与主体各自带圆角。
+   原因: 实测在 Electron 的那条渲染路径上, 带 border-radius 的 overflow:hidden
+   容器会把整块内容裁掉(背景还在, 连文字一起消失)。
+   这是**实测现象**不是 CSS 定律 —— overflow:hidden 本来只裁溢出内容;
+   但两种写法视觉等价, 选不依赖祖先裁剪的那种更稳。 */
+.code-block {
+  position: relative;
+  margin: 0 0 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-code);
+}
+
+.code-block > .code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px 6px 13px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+}
+
+.code-head .code-lang {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+
+.copy-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+
+.copy-btn.is-done {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.copy-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.62;
+  tab-size: 2;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* 行内代码 */
+:not(pre) > code {
+  padding: 0.15em 0.38em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-code);
+  color: var(--fg-strong);
+  word-break: break-word;
+}
+
+/* 语法着色(极简,只区分注释/字符串/关键字) */
+.tok-c {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+.tok-s {
+  color: #0a7d4e;
+}
+.tok-k {
+  color: #8250df;
+  font-weight: 600;
+}
+.tok-n {
+  color: #b1560f;
+}
+html.dark .tok-s {
+  color: #7ee2a8;
+}
+html.dark .tok-k {
+  color: #d2a8ff;
+}
+html.dark .tok-n {
+  color: #f0a868;
+}
+
+/* ── 提示框 ───────────────────────────────────────────────────────────── */
+
+.callout {
+  margin: 0 0 20px;
+  padding: 13px 16px 13px 15px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.callout > :last-child {
+  margin-bottom: 0;
+}
+
+.callout-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-weight: 650;
+  color: var(--fg-strong);
+  font-size: 14.5px;
+}
+
+.callout-title .callout-icon {
+  flex: none;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.callout.info {
+  border-left-color: var(--info);
+}
+.callout.info .callout-icon {
+  background: var(--info);
+}
+.callout.tip {
+  border-left-color: var(--ok);
+}
+.callout.tip .callout-icon {
+  background: var(--ok);
+}
+.callout.warn {
+  border-left-color: var(--warn);
+}
+.callout.warn .callout-icon {
+  background: var(--warn);
+}
+.callout.danger {
+  border-left-color: var(--danger);
+}
+.callout.danger .callout-icon {
+  background: var(--danger);
+}
+
+.callout-body > p:first-child {
+  margin-top: 0;
+}
+
+/* ── 徽章 ─────────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.7;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.badge.ok {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.badge.warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.badge.danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.badge.info {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.method {
+  display: inline-block;
+  min-width: 46px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border: 1px solid var(--accent-border);
+}
+
+.method.post {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.method.get {
+  background: var(--info-soft);
+  color: var(--info);
+  border-color: var(--info);
+}
+
+/* ── 卡片网格 ─────────────────────────────────────────────────────────── */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 14px;
+  margin: 0 0 24px;
+}
+
+.card {
+  display: block;
+  padding: 16px 17px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.card:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+.card-title {
+  margin-bottom: 5px;
+  font-weight: 650;
+  font-size: 15px;
+  color: var(--fg-strong);
+}
+
+.card-desc {
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  line-height: 1.6;
+}
+
+/* ── 步骤条 ───────────────────────────────────────────────────────────── */
+
+.steps {
+  counter-reset: step;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 22px;
+}
+
+.steps > li {
+  position: relative;
+  padding-left: 40px;
+  margin-bottom: 20px;
+}
+
+.steps > li::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.steps > li::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 30px;
+  bottom: -20px;
+  width: 1px;
+  background: var(--border);
+}
+
+.steps > li:last-child::after {
+  display: none;
+}
+
+/* ── 首页 hero ────────────────────────────────────────────────────────── */
+
+.hero {
+  padding: 30px 0 8px;
+}
+
+.hero h1 {
+  font-size: 2.35rem;
+  margin-bottom: 12px;
+}
+
+.hero .lede {
+  font-size: 1.1rem;
+  max-width: 720px;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 22px 0 8px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 17px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--fg-strong);
+  font-size: 14.5px;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 统计条 */
+/* 统计条
+   与 .code-block 同理: 不靠 overflow: hidden 裁圆角, 而是让每个格子自己带分隔线。 */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 0 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.stat {
+  flex: 1 1 130px;
+  padding: 14px 18px;
+}
+
+.stat + .stat {
+  border-left: 1px solid var(--border);
+}
+
+.stat-num {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--fg-strong);
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+/* ── 页脚 ─────────────────────────────────────────────────────────────── */
+
+.page-footer {
+  margin-top: 60px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-faint);
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  justify-content: space-between;
+}
+
+.page-footer a {
+  color: var(--fg-muted);
+}
+
+/* ── 下一/上一页 ──────────────────────────────────────────────────────── */
+
+.pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 44px;
+}
+
+.pager a {
+  display: block;
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg);
+}
+
+.pager a:hover {
+  border-color: var(--accent-border);
+  text-decoration: none;
+}
+
+.pager .pager-dir {
+  font-size: 12px;
+  color: var(--fg-faint);
+}
+
+.pager .pager-title {
+  font-weight: 640;
+  color: var(--fg-strong);
+}
+
+.pager .next {
+  text-align: right;
+}
+
+/* ── 调试台 ───────────────────────────────────────────────────────────── */
+
+.console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+/* grid/flex 子项默认 min-width: auto —— 它们不肯收缩到内容的最小宽度以下,
+   于是窄屏上整页被撑出横向滚动(实测 390px 视口下 scrollWidth 499)。
+   显式给 0, 让内部自己处理溢出。 */
+.console > * {
+  min-width: 0;
+}
+
+/* 调试台每列内部的纵向排布。
+   列宽必须是 minmax(0, 1fr): 默认的 auto 会按 max-content 定尺,
+   而源列表里最长的那条(源名 + 机构 + 国别)能把整列撑到 460px 宽。 */
+.console-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .console {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  font-size: 13px;
+  font-weight: 640;
+  color: var(--fg-strong);
+}
+
+.panel-body {
+  padding: 14px;
+}
+
+.field {
+  margin-bottom: 13px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 640;
+  color: var(--fg-muted);
+}
+
+.field .hint {
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
+input[type="text"],
+input[type="number"],
+input[type="search"],
+select,
+textarea {
+  width: 100%;
+  /* input 的固有最小宽度来自 size 属性, 不置 0 的话在窄屏里撑不开容器。 */
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13.5px;
+}
+
+textarea {
+  font-family: var(--font-mono);
+  font-size: 12.8px;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 96px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.out {
+  margin: 0;
+  padding: 13px 15px;
+  background: var(--bg-code);
+  font-size: 12.6px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  min-height: 240px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.console-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 端点选择 */
+.endpoint-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+/* 列表里的分组标题(源按 family 分组时用) */
+.group-title {
+  position: sticky;
+  top: 0;
+  padding: 6px 11px 5px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-faint);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.endpoint-item {
+  display: block;
+  width: 100%;
+  padding: 8px 11px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.endpoint-item:last-child {
+  border-bottom: 0;
+}
+
+.endpoint-item:hover {
+  background: var(--bg-hover);
+}
+
+.endpoint-item.is-selected {
+  background: var(--accent-soft);
+}
+
+.endpoint-item .ep-id {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12.8px;
+  font-weight: 640;
+  color: var(--fg-strong);
+  /* 源名可能很长(中文名 + 英文缩写), 不允许断行会把整列撑爆。 */
+  overflow-wrap: anywhere;
+}
+
+.endpoint-item .ep-meta {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-faint);
+  overflow-wrap: anywhere;
+}
+
+/* 提示条 */
+.inline-hint {
+  margin: -4px 0 12px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.inline-hint code {
+  font-size: 11.8px;
+}
+
+/* ── 打印 ─────────────────────────────────────────────────────────────── */
+
+@media print {
+  .topbar,
+  .sidebar,
+  .toc,
+  .pager,
+  .copy-btn {
+    display: none !important;
+  }
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .content {
+    padding: 0;
+  }
+  body {
+    background: #fff;
+  }
+}

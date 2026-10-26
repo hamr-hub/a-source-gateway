@@ -8,8 +8,8 @@ import (
 
 // OpenAPIDocument returns the OpenAPI 3.1 description of the gateway.
 //
-// The document is generated from the same route table that serves the
-// requests, so it cannot drift away from the implementation.
+// 注意: 这份描述是**手工维护的字面量**, 不是从上面那张路由表生成的 ——
+// 改路由时必须同步改这里, 否则客户端生成器会拿到过期的描述。
 func OpenAPIDocument() *parser.Object {
 	doc := parser.NewObject()
 	doc.Set("openapi", "3.1.0")
@@ -84,8 +84,11 @@ func pathsObject() *parser.Object {
 	}, nil, []any{responseRef("404", "未知端点")}))
 	paths.Set("/v1/sources/{source_id}/endpoints/{endpoint_id}", endpoint)
 
-	queryGet := parser.NewObject()
-	queryGet.Set("get", op("执行查询(查询参数形式)", []any{
+	// /v1/query 同时支持 GET 与 POST —— 必须写在**同一个** path 对象里。
+	// 之前分两次 paths.Set("/v1/query", ...), 后写的把先写的整个覆盖掉,
+	// 于是 Go 侧的 OpenAPI 里只剩 post, GET /v1/query "人间蒸发"。
+	query := parser.NewObject()
+	query.Set("get", op("执行查询(查询参数形式)", []any{
 		paramQuery("source", "源 id", "string", true),
 		paramQuery("endpoint", "端点 id", "string", true),
 		paramQuery("params", "JSON 串", "string", false),
@@ -98,16 +101,13 @@ func pathsObject() *parser.Object {
 		responseRef("400", "params 不是合法 JSON"),
 		responseRef("404", "未知数据源"),
 	}))
-	paths.Set("/v1/query", queryGet)
-
-	queryPost := parser.NewObject()
-	queryPost.Set("post", op("执行查询", nil,
+	query.Set("post", op("执行查询", nil,
 		[]any{requestBody()}, []any{
 			responseRef("200", "查询信封"),
 			responseRef("404", "未知数据源"),
 			responseRef("422", "请求体不合法"),
 		}))
-	paths.Set("/v1/query", queryPost)
+	paths.Set("/v1/query", query)
 
 	return paths
 }

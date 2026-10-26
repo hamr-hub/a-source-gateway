@@ -12,8 +12,8 @@
 数据源的**元数据索引**(海外清单 + 国内清单,见[规则 3.1](#规则-31--两份清单的分工海外用哪份国内用哪份)),
 并按需实时向上游官方 API 取数,封装成统一信封对外提供 HTTP API 与 MCP 工具。
 
-国内 A 类源另有一份**国内清单** `data/source_inventory_cn.csv`(32 个高优先级候选 + 已接入的存量源;
-按国别分工)。
+国内 A 类源另有一份**国内清单** `data/source_inventory_cn.csv`(34 个源 = 10 个已接入
++ 24 个候选;按国别分工)。
 
 对调用方的硬承诺:**任何一次调用都在 500ms 内返回**;做不到时不超时挂死,而是返回
 `meta.degraded=true` + `meta.fallback.upstream_url`,让调用方可以立刻直连上游。
@@ -92,6 +92,14 @@
 
 **国内清单的列契约**:前 17 列与 `data/source_inventory.csv` **列名与列序完全一致**;
 第 18 列 `优先级`(`P0`/`P1`/`P2`)是国内清单**专有**列,P0 = 最高优先接入/维护。
+
+**端点定义里两个与国内源相关的字段**(1.1 起):
+
+- `response.item_path` 支持**数字下标**(与 `total_field` 同一套语义):深交所的响应是
+  顶层数组 `[{metadata:…, data:[…]}]`,所以写 `item_path: "0.data"`、
+  `total_field: "0.metadata.recordcount"`。
+- `response.item_flatten: true`(默认 false):列表**套列表**时展平一层 ——
+  上交所公告的 `pageHelp.data` 是 `[[{…}], [{…}]]`,不展平的话调用方拿到的是数组套数组。
 
 **"已接入" vs "候选" 是机器可判定的,不要靠感觉**:
 
@@ -298,7 +306,7 @@ python3 scripts/demo.py "My Journal API" --limit 2
 ### 步骤 9 —— 收尾
 
 ```bash
-make check              # ruff + mypy + pytest + 数据校验 + Go 构建/测试 + 注册表 parity
+make check              # ruff + mypy + pytest + 数据校验 + Go 构建/测试 + 注册表 parity + 文档站自检
 ```
 
 然后提 PR。PR 描述必须包含:官方入口、限速口径、规模与增量的**取法**、合规风险判断依据,
@@ -329,7 +337,10 @@ a-source-gateway/
 │   ├── recon.py                侦察目标站点
 │   ├── scaffold_source.py      生成草稿(CSV 行 + endpoints 条目)
 │   ├── verify_source.py        证据关卡:真实请求 + 断言
-│   └── demo.py                 产出调用示例与真实数据
+│   ├── demo.py                 产出调用示例与真实数据
+│   ├── serve_docs.py           起本地文档站 + /__gateway 代理
+│   └── check_docs.py           文档站自检(结构 / 链接 / 导航)
+├── site/                       文档站(静态,零依赖;make docs 起本地服务)
 ├── python/tests/                 pytest(默认不联网)
 ├── docs/                       方案文档 / 技术选型(ADR)/ 优化报告 / meta 规范 / 性能
 ├── deploy/                     k8s / systemd / 部署 runbook
@@ -355,6 +366,8 @@ a-source-gateway/
 | `make verify-source ID` | 证据关卡 |
 | `make demo ID` | 调用示例 + 真实数据 |
 | `make parity` | 校验 Go 与 Python 构建出的注册表一致 |
+| `make docs` | 起本地文档站(带网关代理, 调试台可用) |
+| `make docs-check` | 校验文档站(结构 / 内部链接 / 导航齐全) |
 | `make check` | 提交前全量检查 |
 
 服务起来之后:
@@ -416,7 +429,7 @@ curl -s -X POST http://127.0.0.1:8848/v1/query -H 'Content-Type: application/jso
 一个"新增数据源"的改动,只有同时满足下面全部条件才算完成:
 
 - [ ] `make validate` 通过
-- [ ] `make check` 通过(ruff / mypy / pytest / Go 构建与测试 / parity)
+- [ ] `make check` 通过(ruff / mypy / pytest / Go 构建与测试 / parity / 文档站自检)
 - [ ] `python3 scripts/verify_source.py <源名> --direct-only` 退出码为 `0`,且输出里有**真实响应样本**
 - [ ] `python3 scripts/verify_source.py <源名>`(走网关)要么退出码 `0`,要么是 `DEGRADED`
       (网络慢时的预期结果 —— 关键是它必须给出 `fallback.upstream_url`)

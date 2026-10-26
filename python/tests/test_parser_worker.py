@@ -204,3 +204,38 @@ def test_project_keeps_non_dict_rows_when_fields_given():
     assert data == [{"a": 1}, "raw"]            # 非字典行原样保留, 不炸
     assert total == 2
     assert truncated is False
+
+
+# ── 顶层数组 / 列表套列表(国内源用到的两种形状) ─────────────────────────
+def test_top_level_array_is_located_by_numeric_item_path():
+    """顶层是数组时, item_path 用数字下标定位(深交所 A股列表的形状)。"""
+    from a_source_gateway.parser_worker import project
+
+    payload = [{"metadata": {"recordcount": 2906},
+                "data": [{"agdm": "000001"}, {"agdm": "000002"}], "error": None}]
+    data, total, _truncated = project(payload, item_path="0.data",
+                                      total_field="0.metadata.recordcount", limit=10)
+    assert total == 2906
+    assert [row["agdm"] for row in data] == ["000001", "000002"]
+
+
+def test_top_level_array_with_object_item_path_keeps_whole_payload():
+    """顶层是数组且路径首段不是数字时, 保持整个数组(不能变成空列表)。"""
+    from a_source_gateway.parser_worker import project
+
+    payload = [{"id": "W1"}, {"id": "W2"}]
+    data, total, _truncated = project(payload, item_path="items", limit=10)
+    assert len(data) == 2
+    assert total == 2
+
+
+def test_item_flatten_flattens_one_level():
+    """列表套列表时展平一层(上交所公告的形状)。"""
+    from a_source_gateway.parser_worker import project
+
+    payload = {"pageHelp": {"total": 2, "data": [[{"TITLE": "a"}], [{"TITLE": "b"}]]}}
+    data, total, _truncated = project(payload, item_path="pageHelp.data",
+                                      total_field="pageHelp.total",
+                                      item_flatten=True, limit=10)
+    assert total == 2
+    assert [row["TITLE"] for row in data] == ["a", "b"]

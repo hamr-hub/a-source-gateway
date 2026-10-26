@@ -219,13 +219,14 @@ func (c CrawlSpec) MarshalJSON() ([]byte, error) {
 
 // ResponseSpec describes the shape of an upstream response.
 type ResponseSpec struct {
-	MediaType  string
-	Shape      string
-	Fields     []FieldSpec
-	ItemPath   string
-	ItemShape  string
-	TotalField string
-	Notes      string
+	MediaType   string
+	Shape       string
+	Fields      []FieldSpec
+	ItemPath    string
+	ItemShape   string
+	ItemFlatten bool
+	TotalField  string
+	Notes       string
 }
 
 // ToObject renders the response spec as an ordered object.
@@ -243,6 +244,9 @@ func (r ResponseSpec) ToObject() *parser.Object {
 	}
 	if r.ItemShape != "list" {
 		o.Set("item_shape", r.ItemShape)
+	}
+	if r.ItemFlatten {
+		o.Set("item_flatten", true)
 	}
 	if r.TotalField != "" {
 		o.Set("total_field", r.TotalField)

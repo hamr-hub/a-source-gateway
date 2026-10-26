@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>加源指南 · a-source-gateway 文档</title>
+<meta name="description" content="把一个新数据源接进 a-source-gateway 的九步流程:合规前置检查 → 侦察 → 补语义 → 生成草稿 → 别名 → 校验 → 证据关卡 → 部署 → demo → 收尾。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="topbar">
+  <button class="icon-btn nav-toggle" id="nav-toggle" type="button" aria-label="打开目录" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+  <a class="brand" href="index.html">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0f6fb8"/>
+      <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round">
+        <path d="M8 11h6M8 21h6M18 16h6"/><path d="M14 11v10"/>
+      </g>
+      <circle cx="24" cy="16" r="2.6" fill="#ffffff"/>
+    </svg>
+    <span>a-source-gateway</span>
+    <span class="brand-sub">文档</span>
+  </a>
+  <span class="topbar-spacer"></span>
+  <div class="topbar-actions">
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input class="search-input" id="search-input" type="search" placeholder="搜索文档" aria-label="搜索文档" autocomplete="off">
+      <span class="search-kbd">/</span>
+      <div class="search-results" id="search-results" hidden></div>
+    </div>
+    <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换主题"></button>
+    <a class="icon-btn" href="https://github.com/hamr-hub/a-source-gateway" aria-label="GitHub 仓库" title="GitHub 仓库">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 .5a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.2c-3.2.7-3.88-1.38-3.88-1.38-.53-1.34-1.29-1.7-1.29-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0024 12.5 11.5 11.5 0 0012 .5z"/>
+      </svg>
+    </a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav-group">
+      <div class="nav-group-title">开始</div>
+      <a class="nav-link" href="index.html">首页</a>
+      <a class="nav-link" href="quickstart.html">快速部署</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接口</div>
+      <a class="nav-link" href="api.html">API 参考</a>
+      <a class="nav-link" href="envelope.html">信封与降级</a>
+      <a class="nav-link" href="debug.html">API 调试台</a>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-group-title">接入</div>
+      <a class="nav-link" href="mcp.html">MCP 集成</a>
+      <a class="nav-link" href="adding-source.html">加源指南</a>
+    </nav>
+  </aside>
+
+  <main class="content" id="main">
+    <div class="doc">
+
+      <h1>加源指南</h1>
+      <p class="lede">
+        这是本项目最主要的日常任务。把一个官方公开的数据源接进来,只需要<strong>改数据文件</strong>:
+        九步流程,每一步都有明确的命令、产出和判据,最后交出<strong>可复制的调用示例 + 真实返回的数据</strong>。
+        这一页既写给人看,也写给 AI 智能体照着做。
+      </p>
+
+      <h2>加源是什么:只改数据文件,不改代码</h2>
+      <p>
+        网关只存<strong>源元数据索引</strong>,数据按需实时取。所以"加一个源"本质上是
+        <strong>往几张表里写几行</strong> —— Go 网关与 Python 解析面在启动时从同一份 <code>data/</code> 构建注册表,
+        不需要改任何一行 Python 或 Go 代码。
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>要加什么</th><th>改哪个文件</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>源基本信息(<strong>海外</strong> / 全球 / 多国)</td><td><code>data/source_inventory.csv</code> 加一行(17 列)</td></tr>
+            <tr><td>源基本信息(<strong>中国国内</strong>)</td><td><code>data/source_inventory_cn.csv</code> 加一行(18 列)</td></tr>
+            <tr><td>端点定义</td><td><code>data/endpoints.json</code> 的 <code>sources</code> 下加键</td></tr>
+            <tr><td>常用简称 / 别名</td><td><code>data/aliases.json</code> 的 <code>aliases</code> 对象里加键</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <div class="callout-title"><span class="callout-icon">!</span>三条不可违反的硬规则</div>
+        <div class="callout-body">
+          <ol style="margin-bottom:0">
+            <li><strong>合法性优先于功能</strong> —— 只接入官方公开、允许程序化访问的数据源。不绕限速、不加代理池、不接入需要登录/付费才能读的数据。</li>
+            <li><strong>不许编造</strong> —— 每个字段都要能追溯到上游文档、真实请求,或维护者的明确说明。拿不准就留空或写"未实测"。</li>
+            <li><strong>加源不改代码</strong> —— 不要为了加源去改 <code>python/src/</code> 下的任何文件,也不要往 Go 代码里硬编码源、端点或别名。</li>
+          </ol>
+        </div>
+      </div>
+
+      <h2>步骤 0 —— 合规前置检查(30 秒)</h2>
+      <p>在动手之前先回答这三个问题,<strong>任何一个答不上来就先问用户</strong>:</p>
+
+      <ol class="steps">
+        <li>
+          <h3 style="margin-top:0">这个数据是不是法规强制公开,或官方免费开放的?</h3>
+          <p>答不上来 → 先问用户。不要靠"看起来像公开数据"下判断。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">官方条款 / robots 是否允许程序化访问?</h3>
+          <p>答不上来 → 先问用户。不允许程序化访问的站点,再开放也不接。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">它是否公布了限速口径?</h3>
+          <p>
+            没有公布也行,但<strong>要写清"未公布"或"实测观察到"</strong> —— 不能空着,也不能编一个数字。
+            限速是授权条件,不是技术障碍。
+          </p>
+        </li>
+      </ol>
+
+      <h2>九步流程</h2>
+      <p>
+        每一步都给了「做什么 / 命令 / 产出 / 判据」。<strong>步骤 6 是证据关卡,不能跳过</strong>。
+      </p>
+
+      <ol class="steps">
+        <li>
+          <h3 style="margin-top:0">步骤 1 · 侦察目标站点</h3>
+          <p><strong>做什么</strong>:探测可达性、状态码、内容类型、延迟、认证要求(401/403/<code>WWW-Authenticate</code>)、限速响应头(<code>X-RateLimit-*</code>/<code>Retry-After</code>)、常见 API 文档端点(<code>/openapi.json</code>、<code>/swagger.json</code>、<code>/api-docs</code> 等,最多约 20 次探测),以及 JSON 响应里<strong>列表所在路径</strong>和<strong>总数所在路径</strong>的启发式推断。</p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>python3 scripts/recon.py https://api.example.org/works -o /tmp/recon.json
+</code></pre>
+          </div>
+          <p><strong>常用参数</strong>:<code>--contact you@example.org</code>(很多官方 API 要求 UA 带邮箱)、<code>--timeout 8</code>、<code>--no-probe</code>(跳过路径发现)。</p>
+          <p><strong>产出</strong>:<code>/tmp/recon.json</code>。每个推断字段都带 <code>inference</code>(推断依据);无法确定的字段是 <code>null</code> 并且有 <code>warnings</code>。</p>
+          <p><strong>判据</strong>:状态码正常、没有解释不了的 <code>warnings</code>。若报 403 而站点文档要求 UA 带邮箱,设 <code>A_GATEWAY_CONTACT=you@example.com</code> 后重试。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 2 · 补齐语义(这一步需要判断,不能自动化)</h3>
+          <p>
+            <strong>做什么</strong>:侦察能测出"接口长什么样",测不出"这数据干什么、更新多快、限速怎么算"。
+            靠读上游文档 + 领域判断补齐下面这些字段。
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>字段</th><th>从哪来</th><th>典型写法</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>分类</td><td>你的判断,取自现有十族</td><td><code>七、学术与文献</code></td></tr>
+                <tr><td>机构 / 国别</td><td>上游官方站点</td><td><code>美国SEC</code> / <code>美国</code></td></tr>
+                <tr><td>数据内容</td><td>上游文档</td><td><code>申报文件全文/XBRL财报/Form4内部人</code></td></tr>
+                <tr><td>认证方式</td><td><strong>必须用分类器认识的写法</strong>(见下方取值表)</td><td><code>无key</code></td></tr>
+                <tr><td>官方限速口径</td><td>上游文档原文</td><td><code>官方约10次/秒</code></td></tr>
+                <tr><td>实测规模</td><td>真实请求拿到的数字 + 计数口径</td><td><code>实测 1234567 条(接口 total 字段)</code></td></tr>
+                <tr><td>实测增量</td><td>真实观测</td><td><code>约 3300 份/日(按 daily-index 增量)</code></td></tr>
+                <tr><td>代理需求 / 合规风险</td><td>你的判断</td><td><code>不走代理</code> / <code>低</code></td></tr>
+                <tr><td>建议采集方式</td><td>你的判断</td><td><code>按 published_date 增量</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>产出</strong>:一张填满的字段表,每个值都有出处。</p>
+          <p><strong>判据</strong>:<code>实测增量</code> 不能等于 <code>实测规模</code>(<code>make validate</code> 会拦);<code>实测规模</code> 要写清计数口径,不能只写一个孤零零的数字。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 3 · 生成草稿</h3>
+          <p><strong>做什么</strong>:用侦察报告 + 你补的语义生成一行 CSV、一个端点定义和一份待办清单。<strong>默认写到草稿目录,不动真实数据文件。</strong></p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>python3 scripts/scaffold_source.py \
+  --recon /tmp/recon.json \
+  --name "Example Journal API" \
+  --family "七、学术与文献" \
+  --org "Example Journal" \
+  --country "全球" \
+  --summary "期刊论文元数据与引用" \
+  --out-dir /tmp/draft
+</code></pre>
+          </div>
+          <p><strong>产出</strong>(都在 <code>/tmp/draft/</code>):</p>
+          <ul>
+            <li><code>source_inventory.row.csv</code> —— 可直接粘进对应清单的一行</li>
+            <li><code>endpoints.entry.json</code> —— 可直接粘进 <code>data/endpoints.json</code> 的端点定义</li>
+            <li><code>REPORT.md</code> —— 每个字段的来源,以及<strong>仍需人补的 TODO 项</strong>(限速口径、规模口径、增量策略)</li>
+          </ul>
+          <p>
+            落哪份清单由 <code>--country</code> 决定:<code>--country '中国'</code> → <code>data/source_inventory_cn.csv</code>
+            (国内行多一列 <code>优先级</code>,用 <code>--priority P0|P1|P2</code> 指定);其余 → <code>data/source_inventory.csv</code>。
+          </p>
+          <p>看完 <code>REPORT.md</code> 的 TODO 补齐后再落盘:</p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>python3 scripts/scaffold_source.py --recon /tmp/recon.json --name "..." --apply
+</code></pre>
+          </div>
+          <p><strong>判据</strong>:<code>REPORT.md</code> 里的 TODO 全部补齐才能 <code>--apply</code>。<code>--apply</code> 是幂等保护式的:源名已存在就拒绝执行。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 4 · 加别名</h3>
+          <p><strong>做什么</strong>:编辑 <code>data/aliases.json</code>,在 <strong><code>aliases</code> 对象里</strong>加一项(让 LLM、简称也能找到它)。</p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">json</span></div>
+            <pre><code>{
+  "version": "1.0",
+  "aliases": {
+    "My Journal API": ["mja", "myjournal"]
+  }
+}
+</code></pre>
+          </div>
+          <p><strong>产出</strong>:<code>data/aliases.json</code> 多一项。</p>
+          <p>
+            <strong>判据</strong>:键必须<strong>精确等于</strong> CSV 里 <code>数据源</code> 那一列的值;
+            必须嵌在 <code>aliases</code> 对象里(见下方「常见坑」)。
+            <strong>已接入的国内源必须有 ASCII 别名</strong>。
+          </p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 5 · 校验</h3>
+          <p><strong>做什么</strong>:</p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>make validate          # 等价于 python3 -m a_source_gateway.cli validate
+</code></pre>
+          </div>
+          <p>
+            它检查<strong>两份清单</strong>(<code>source_inventory.csv</code> + <code>source_inventory_cn.csv</code>):
+            列齐全、源名不重复、官方入口是 URL、<code>实测增量</code> 非空且不等于 <code>实测规模</code>、
+            认证方式取值能被分类器识别、没有残留的 <code>TODO&#40;…&#41;</code> 占位符、
+            <code>endpoints.json</code> 的每个键在两份清单合计里能找到对应行、每个端点有 <code>url_template</code> 与 <code>response</code>、
+            必填参数都有 <code>example</code> 或 <code>default</code>、URL 里用了 <code>{size}</code> 就必须声明 <code>size</code> 参数;
+            另外还查国别归属、跨文件重名、优先级取值(P0/P1/P2)与已接入国内源的 ASCII 别名。
+          </p>
+          <p><strong>判据</strong>:<code>make validate</code> 退出码 0。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 6 · 用真实数据验证(证据关卡,不能跳过)</h3>
+          <p><strong>做什么</strong>:真的去请求上游,然后断言你声明的元数据。</p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>python3 scripts/verify_source.py "My Journal API" --direct-only
+</code></pre>
+          </div>
+          <p>断言这四件事:</p>
+          <ul>
+            <li>声明的 <code>response.item_path</code> 在真实响应里<strong>确实</strong>指向一个列表;</li>
+            <li>声明的 <code>response.total_field</code> <strong>确实</strong>是一个数字;</li>
+            <li><code>response.fields</code> 里声明的字段名在返回条目里<strong>确实</strong>出现;</li>
+            <li>本次调用<strong>没有降级</strong>(降级的调用不算"验证通过")。</li>
+          </ul>
+          <p><strong>退出码</strong>:<code>0</code> 已用真实数据验证通过 / <code>1</code> 断言失败或调用降级 / <code>2</code> <strong>根本连不上上游</strong>(环境问题,不是源的问题 —— 如实报告,不要伪造)。另外 <code>2</code> 也用于参数非法、注册表载入失败这类<strong>用法错误</strong>。</p>
+          <div class="callout warn">
+            <div class="callout-title"><span class="callout-icon">!</span>为什么建议加 --direct-only,以及两条都要跑</div>
+            <div class="callout-body">
+              <p>
+                走网关时上游预算只有 <strong>400ms</strong>,而从中国到欧美上游的实测往返常常是 <strong>0.4–7.5s</strong> ——
+                于是调用会<strong>正常地降级</strong>,<code>not_degraded</code> 断言随之失败、退出码变成 <code>1</code>。
+                <strong>那不是元数据写错了,是网络慢。</strong>
+                <code>--direct-only</code> 让验证脚本直连上游(带自己的超时),不受网关 400ms 预算影响,才能真正回答"我声明的字段对不对"。
+              </p>
+              <p>代价:直连验证<strong>不覆盖网关这一段</strong>。所以两条都要跑:</p>
+              <div class="code-block" style="margin-bottom:0">
+                <div class="code-head"><span class="code-lang">bash</span></div>
+                <pre><code>python3 scripts/verify_source.py "My Journal API" --direct-only   # 元数据对不对
+python3 scripts/verify_source.py "My Journal API"                  # 网关在预算内能不能通
+</code></pre>
+              </div>
+              <p style="margin-top:10px">
+                第二条在网络慢时返回 <code>DEGRADED</code> + 退出码 <code>1</code>,这是<strong>预期行为</strong>,不是源有问题;
+                它证明的是"网关在预算内优雅降级并给出直连兜底"。关键是它必须给出 <code>fallback.upstream_url</code>。
+              </p>
+              <p style="margin-top:10px">退出码是 <code>1</code> 时<strong>先看断言名</strong>:</p>
+              <ul style="margin-bottom:0">
+                <li><code>not_degraded</code> 失败 → 网络/预算问题,元数据可能完全正确,<strong>别去改元数据</strong>;</li>
+                <li><code>item_path_resolves_to_list</code> / <code>total_field_resolves_to_number</code> 失败 → <strong>元数据写错了</strong>,去改。</li>
+              </ul>
+            </div>
+          </div>
+          <p><strong>判据</strong>:<code>--direct-only</code> 退出码 <code>0</code>,且输出里有<strong>真实响应样本</strong>。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 7 · 更新部署</h3>
+          <p><strong>做什么</strong>:让网关重新加载注册表。</p>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>make up                 # docker compose up -d --build
+make gateway-run        # 或本地直接跑 Go 网关
+</code></pre>
+          </div>
+          <p><strong>产出</strong>:跑起来的网关加载了新注册表。</p>
+          <p><strong>判据</strong>:<code>GET /v1/sources</code> 里能看到新源。<strong>只改数据文件时,重启即可生效</strong>(注册表在进程启动时从 <code>data/</code> 构建);改了代码才需要重新 build。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 8 · 给出调用示例和真实数据(交付物)</h3>
+          <p><strong>做什么</strong>:产出三样东西,<strong>原样贴给你的用户</strong>:</p>
+          <ol>
+            <li>端点说明(干什么的、必填参数、限速口径);</li>
+            <li>一条可复制粘贴的 <code>curl</code> 命令;</li>
+            <li><strong>真实的</strong>响应信封(<code>data</code> 截断到前 1–2 条)。</li>
+          </ol>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>python3 scripts/demo.py "My Journal API" --limit 2
+</code></pre>
+          </div>
+          <p><strong>判据</strong>:输出里有真实数据,不是占位符。<code>demo.py</code> 遇到降级会非零退出 —— 它不拿降级数据当"跑通了"给人看。</p>
+        </li>
+
+        <li>
+          <h3 style="margin-top:0">步骤 9 · 收尾</h3>
+          <div class="code-block">
+            <div class="code-head"><span class="code-lang">bash</span></div>
+            <pre><code>make check              # ruff + mypy + pytest + 数据校验 + Go 构建/测试 + 注册表 parity + 文档站自检
+</code></pre>
+          </div>
+          <p>然后提 PR。PR 描述必须包含:官方入口、限速口径、规模与增量的<strong>取法</strong>、合规风险判断依据,以及步骤 6/8 的真实输出片段。</p>
+          <p><strong>判据</strong>:<code>make check</code> 全绿,PR 里带着真实请求输出。</p>
+        </li>
+      </ol>
+
+      <h2>认证方式取值表</h2>
+      <p>
+        分类器是<strong>规则表匹配</strong>(见 <code>python/src/a_source_gateway/registry.py</code> 的
+        <code>AUTH_RULES</code>),写了它不认识的值会被 <code>make validate</code> 拦下。
+        推荐用下表左边这一列的写法:
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>推荐写法</th><th>含义</th><th>规则表里也认的等价写法</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>无key</code></td><td>完全不需要任何凭据</td><td><code>无 key</code>、<code>无需</code></td></tr>
+            <tr><td><code>需邮箱</code></td><td>只要 UA 里带联系邮箱(最常见)</td><td><code>邮箱</code></td></tr>
+            <tr><td><code>免费key</code></td><td>免费注册拿 key</td><td><code>api key</code></td></tr>
+            <tr><td><code>可注册key</code></td><td>可以注册,可能免费也可能收费</td><td>—</td></tr>
+            <tr><td><code>可选key</code></td><td>有 key 更好,没 key 也能用</td><td>—</td></tr>
+            <tr><td><code>需token</code></td><td>要 bearer token</td><td><code>token</code>、<code>oauth</code></td></tr>
+            <tr><td><code>部分付费</code></td><td>一部分接口要钱</td><td><code>需付费</code></td></tr>
+            <tr><td><code>账号+付费</code></td><td>必须账号并且付费</td><td>—</td></tr>
+            <tr><td><code>免费/付费</code></td><td>分档:免费版和付费版</td><td>—</td></tr>
+            <tr><td><code>部分免费部分付费</code></td><td>按数据分档</td><td>—</td></tr>
+            <tr><td><code>多数免费</code></td><td>大部分免费,少部分收费</td><td>—</td></tr>
+            <tr><td><code>部分注册</code></td><td>只有部分接口要注册</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout danger">
+        <div class="callout-title"><span class="callout-icon">!</span>不要写"无key"以外的任意含 key 的词</div>
+        <div class="callout-body">
+          <p>
+            历史 bug:用 <code>"key" in text</code> 判定,会把 65 个"无key"的源误判成需要 key。
+            现在是规则表匹配,并且 <code>可选</code> + <code>key</code> 必须优先于 <code>无key</code> 判定。
+            自造写法(如 <code>需要APIKey</code>)会被 validate 拦下。
+          </p>
+        </div>
+      </div>
+
+      <h2>两份清单怎么选:只看「国别」列</h2>
+      <p>
+        本仓库有<strong>两份</strong>源清单,按 <code>国别</code> 列分工,<strong>一行只属于一份清单</strong>。
+        判定用的是 <code>a_source_gateway.registry.CN_COUNTRIES</code> / <code>is_cn_country()</code>,
+        脚本与校验器都从这一处取。
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>清单文件</th><th>装什么</th><th>列</th><th>网关运行时是否加载</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>data/source_inventory.csv</code></td>
+              <td><strong>海外</strong>源(<code>国别</code> = 美国 / 欧盟 / 英国 / 全球 / 多国 / …)</td>
+              <td>17 列</td>
+              <td>✅ 全量加载</td>
+            </tr>
+            <tr>
+              <td><code>data/source_inventory_cn.csv</code></td>
+              <td><strong>国内</strong>源(<code>国别</code> ∈ {中国, 中国大陆, 中华人民共和国})</td>
+              <td>18 列(= 17 列契约 + <code>优先级</code>)</td>
+              <td>⚠️ 只加载"已接入"的行</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ul>
+        <li><code>国别</code> ∈ {<code>中国</code>, <code>中国大陆</code>, <code>中华人民共和国</code>} → 落 <code>data/source_inventory_cn.csv</code></li>
+        <li>其余一律(全球 / 多国 / 欧盟 / 美国 / <strong>中国香港</strong>…) → 落 <code>data/source_inventory.csv</code></li>
+      </ul>
+
+      <p>
+        <strong>中国香港是单独法域,留在海外清单</strong> —— 所以这里是白名单而不是前缀匹配。
+        不要靠源名、域名或"这是个新源"来猜归属。
+      </p>
+
+      <h3>「已接入」与「候选」是机器可判定的</h3>
+      <ul>
+        <li>一个国内源<strong>在 <code>data/endpoints.json</code> 里有端点定义</strong> → <strong>已接入</strong> → 运行时加载它;</li>
+        <li><strong>只在 CSV 里、没有端点定义</strong> → <strong>候选</strong> → 运行时<strong>不加载</strong>(候选源不会污染网关的源列表)。</li>
+      </ul>
+      <p>
+        所以国内清单里可以放很多"还没接入"的高优先级候选,不用急着给它们编端点定义 ——
+        <strong>没跑通 <code>verify_source.py</code> 的源不许进 <code>endpoints.json</code></strong>。
+      </p>
+
+      <h2>常见坑</h2>
+
+      <div class="card-grid">
+        <a class="card" href="#常见坑">
+          <div class="card-title">别名写在了顶层</div>
+          <div class="card-desc">两个加载器(Go 与 Python)<strong>只读 <code>aliases</code> 这个键</strong>。写成顶层键会被<strong>静默忽略</strong> —— <code>validate</code> 照样通过,但别名永远不生效。</div>
+        </a>
+        <a class="card" href="#常见坑">
+          <div class="card-title">国内源 id 会漂移</div>
+          <div class="card-desc">源名是中文时 id 会退化成 <code>src_&lt;行号&gt;</code>,<strong>清单一增删就整体平移</strong>。所以已接入的国内源<strong>必须有 ASCII 别名</strong>,<code>make validate</code> 会检查这条。</div>
+        </a>
+        <a class="card" href="#常见坑">
+          <div class="card-title">国内源被抄进海外清单</div>
+          <div class="card-desc">两份都有,改字段时必然漂移(哪份是真的说不清)。国内行<strong>原地保留</strong>在 <code>source_inventory_cn.csv</code>,海外清单不动。</div>
+        </a>
+        <a class="card" href="#常见坑">
+          <div class="card-title">残留 TODO&#40;…&#41; 占位符</div>
+          <div class="card-desc"><code>make validate</code> 会直接拦下。骨架里的 <code>TODO&#40;…&#41;</code> 必须换成真实值或明确的"未实测"。</div>
+        </a>
+        <a class="card" href="#常见坑">
+          <div class="card-title">国内源的 --apply 只写清单</div>
+          <div class="card-desc">国内源的 <code>--apply</code> <strong>只写国内清单(候选池),不写 <code>endpoints.json</code></strong>。还要单独补端点定义与别名才算接入网关。</div>
+        </a>
+        <a class="card" href="#常见坑">
+          <div class="card-title">候选源污染源列表</div>
+          <div class="card-desc">只在 CSV 里、没有端点定义的国内源是<strong>候选</strong>,运行时<strong>不加载</strong>。别急着给候选编端点定义。</div>
+        </a>
+      </div>
+
+      <p>另外几条容易踩的:</p>
+      <ul>
+        <li><strong>必填参数缺 <code>example</code></strong> —— <code>make validate</code> 会拦;端点声明的 <code>url_template</code> 用了 <code>{size}</code> 就必须声明 <code>size</code> 参数。</li>
+        <li><strong>认证方式自造写法</strong> —— 见上面的取值表,规则表不认就会被 validate 拦下。</li>
+        <li><strong>把降级当成"源写错了"</strong> —— 跨境源首次调用降级是<strong>预期行为</strong>。先看断言名:<code>not_degraded</code> 失败是网络问题,<code>item_path_resolves_to_list</code> 失败才是元数据问题。</li>
+        <li><strong>把凭据写进仓库</strong> —— <code>A_GATEWAY_CONTACT</code> 是联系邮箱不是密钥;它写进 User-Agent,<strong>不带邮箱 SEC 直接 403</strong>。所有凭据只走环境变量。</li>
+        <li><strong><code>data/</code> 下的新文件没进分发路径</strong> —— 四处都要加:<code>pyproject.toml</code> 的 <code>force-include</code>、<code>.github/workflows/release.yml</code> 的 tarball 拷贝、<code>deploy/README.md</code> 的 systemd 安装命令、<code>python/Makefile</code> 的 <code>sync-data</code>。漏装的症状:线上注册表比仓库少源。</li>
+      </ul>
+
+      <h2>Definition of Done</h2>
+      <p>一个"新增数据源"的改动,只有<strong>同时满足下面全部条件</strong>才算完成:</p>
+
+      <ol class="steps">
+        <li><code>make validate</code> 通过。</li>
+        <li><code>make check</code> 通过(ruff / mypy / pytest / Go 构建与测试 / parity / 文档站自检)。</li>
+        <li><code>python3 scripts/verify_source.py &lt;源名&gt; --direct-only</code> 退出码为 <code>0</code>,且输出里有<strong>真实响应样本</strong>。</li>
+        <li><code>python3 scripts/verify_source.py &lt;源名&gt;</code>(走网关)要么退出码 <code>0</code>,要么是 <code>DEGRADED</code>(网络慢时的预期结果 —— 关键是它必须给出 <code>fallback.upstream_url</code>)。</li>
+        <li><code>data/aliases.json</code> 已加别名(除非该源名称本身就是唯一标识)。</li>
+        <li><code>python3 scripts/demo.py &lt;源名&gt;</code> 的输出已附在 PR 描述里(<strong>调用示例 + 真实数据</strong>)。</li>
+        <li>PR 描述写清了:官方入口、限速口径、规模与增量的取法、合规风险判断依据。</li>
+        <li>没有改动 <code>python/src/</code> 下的 Python 业务逻辑(加源只改数据文件)。</li>
+      </ol>
+
+      <h2>PR 描述要写什么</h2>
+      <p>一份合格的加源 PR 描述,让没参与开发的人也能复核:</p>
+
+      <ol class="steps">
+        <li>
+          <h3 style="margin-top:0">官方入口</h3>
+          <p>完整 URL + 最近一次链接校验的状态码。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">限速口径</h3>
+          <p>官方公布的原文;没公布就写"未公布"或"实测观察到 …",并说明依据。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">规模与增量的取法</h3>
+          <p>不只是数字,还要说清<strong>怎么数出来的</strong>(哪个接口的哪个字段、什么时间窗口)。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">合规风险判断依据</h3>
+          <p>依据哪份官方条款 / robots / 政策页,得出"低/中/高"哪一档。</p>
+        </li>
+        <li>
+          <h3 style="margin-top:0">步骤 6 / 8 的真实输出片段</h3>
+          <p>贴 <code>verify_source.py</code> 与 <code>demo.py</code> 的<strong>真实终端输出</strong>,不能只写"应该可用"。</p>
+        </li>
+      </ol>
+
+      <div class="callout tip">
+        <div class="callout-title"><span class="callout-icon">✓</span>人保留判断,AI 干重复劳动</div>
+        <div class="callout-body">
+          <p>
+            智能体做重复劳动:侦察、生成草稿、跑验证、产出调用示例。
+            人类维护者保留判断:<strong>合规判定、限速口径确认、代码评审、合并</strong>。
+            涉及新增源类型的 PR 需要一位维护者评审数据字段的真实性。
+          </p>
+        </div>
+      </div>
+
+      <h2>下一步</h2>
+      <div class="card-grid">
+        <a class="card" href="debug.html">
+          <div class="card-title">API 调试台</div>
+          <div class="card-desc">加完源之后,在这里选源、选端点、真的发一次请求,看真实信封。</div>
+        </a>
+        <a class="card" href="envelope.html">
+          <div class="card-title">信封与降级</div>
+          <div class="card-desc">统一信封的每个字段、错误类型表、降级兜底策略 —— 判断"跑通了没有"的标准。</div>
+        </a>
+        <a class="card" href="api.html">
+          <div class="card-title">API 参考</div>
+          <div class="card-desc">全部业务路由的完整参数与错误码;生成的 OpenAPI 描述可直接喂给代码生成器。</div>
+        </a>
+      </div>
+
+    </div>
+
+    <nav class="pager" id="pager"></nav>
+
+    <footer class="page-footer">
+      <span>a-source-gateway 文档 · MIT License</span>
+      <span><a href="https://github.com/hamr-hub/a-source-gateway">GitHub 仓库</a> · <a href="index.html">回到首页</a></span>
+    </footer>
+  </main>
+
+  <nav class="toc" id="toc"></nav>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -15,7 +15,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"   # 1.1: 端点 response 新增 item_flatten(列表套列表展平一层)
 DEFAULT_BUDGET_MS = 500
 UPSTREAM_BUDGET_MS = 400      # 上游取数的墙钟上限
 RESERVE_MS = 100              # 留给解析/投影/序列化/框架开销的余量
@@ -115,11 +115,12 @@ class ResponseSpec:
     fields: list[FieldSpec] = field(default_factory=list)
     item_path: str | None = None     # 列表数据在响应里的路径
     item_shape: str = "list"             # list=数组 | map=字典值域(如 SEC company_tickers)
+    item_flatten: bool = False      # 列表套列表时展平一层(如上交所公告 pageHelp.data)
     total_field: str | None = None   # 总数字段路径
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        d = {
+        d: dict[str, Any] = {
             "media_type": self.media_type,
             "shape": self.shape,
             "fields": [f.to_dict() for f in self.fields],
@@ -128,6 +129,8 @@ class ResponseSpec:
             d["item_path"] = self.item_path
         if self.item_shape != "list":
             d["item_shape"] = self.item_shape
+        if self.item_flatten:
+            d["item_flatten"] = True
         if self.total_field:
             d["total_field"] = self.total_field
         if self.notes:
