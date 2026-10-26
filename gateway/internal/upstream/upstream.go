@@ -49,6 +49,19 @@ type Options struct {
 	UserAgent string
 	// DefaultHeaders are sent with every request.
 	DefaultHeaders map[string]string
+	// HTTP2 enables HTTP/2 for upstream calls.
+	//
+	// The transport below sets a custom DialContext, and the Go standard
+	// library conservatively disables HTTP/2 whenever a custom dialer or
+	// TLS configuration is present. Left as is, every upstream call over
+	// HTTPS pays a separate TCP + TLS handshake. ForceAttemptHTTP2 turns
+	// the protocol back on: repeated calls to the same host are multiplexed
+	// over one connection.
+	//
+	// Upstreams that advertise h2 but serve it badly are handled by the
+	// standard library (the request fails and the caller sees the error);
+	// A_GATEWAY_HTTP2=0 turns the protocol off for those hosts.
+	HTTP2 bool
 }
 
 // New builds the shared upstream client.
@@ -69,6 +82,7 @@ func New(opt Options) *Client {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     opt.HTTP2,
 	}
 	if !opt.VerifyTLS {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // only with A_GATEWAY_VERIFY=none
@@ -201,5 +215,5 @@ func isTimeout(ctx context.Context, err error) bool {
 // Describe returns a short description of the client configuration, used by
 // the startup log.
 func (c *Client) Describe() string {
-	return fmt.Sprintf("pool=%d timeout=none", c.transport.MaxIdleConnsPerHost)
+	return fmt.Sprintf("pool=%d timeout=none http2=%v", c.transport.MaxIdleConnsPerHost, c.transport.ForceAttemptHTTP2)
 }

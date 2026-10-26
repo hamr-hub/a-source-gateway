@@ -90,6 +90,33 @@ def test_list_sources_filter_by_family(client):
     assert all("制裁" in s["family"] for s in d["data"])
 
 
+def test_list_sources_search_covers_id_alias_and_endpoint_id(client):
+    """回归: 以前 q 只匹配 name/summary/org/country/family, 搜不到 id 与别名。
+
+    "能按别名调用、却搜不到"是最难自查的一类缺陷 —— 调用方根本不知道该
+    搜什么词, 于是以为网关没有这个源。
+    """
+    by_id = client.get("/v1/sources?q=sec_edgar").json()
+    assert by_id["meta"]["count"] > 0
+    assert "sec_edgar" in [s["id"] for s in by_id["data"]]
+
+    by_alias = client.get("/v1/sources?q=szse").json()
+    assert "szse" in [s["id"] for s in by_alias["data"]]
+
+    by_endpoint = client.get("/v1/sources?q=submissions").json()
+    assert "sec_edgar" in [s["id"] for s in by_endpoint["data"]]
+
+
+def test_list_sources_projection_exposes_aliases(client):
+    """投影带 aliases(键始终在场, 没有别名时是空数组)。"""
+    d = client.get("/v1/sources?q=szse").json()
+    assert "aliases" in d["fields"]
+    hit = next(s for s in d["data"] if s["id"] == "szse")
+    assert hit["aliases"] == ["szse", "szse_stock"]
+    for s in client.get("/v1/sources?limit=500").json()["data"]:
+        assert isinstance(s["aliases"], list)
+
+
 def test_get_source_meta(client):
     d = client.get("/v1/sources/sec_edgar").json()["data"]
     assert d["name"] == "SEC EDGAR"

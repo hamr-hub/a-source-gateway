@@ -223,14 +223,14 @@ async def stats() -> dict[str, Any]:
 
 @app.get("/v1/sources")
 async def list_sources(family: str = Query("", description="按分类过滤, 模糊匹配"),
-                        q: str = Query("", description="关键词, 搜名称/描述/机构/国别"),
+                        q: str = Query("", description="关键词, 搜名称/别名/源 id/端点 id/描述/机构/国别"),
                         limit: int = Query(200, ge=1, le=500)) -> dict[str, Any]:
     r = _r()
     items = r.list_sources(family=family, q=q)
     return {"meta": {"count": len(items), "family": family, "q": q,
                       "latency_ms": 0, "schema_version": SCHEMA_VERSION},
             "data": items[:limit],
-            "fields": ["id", "name", "family", "org", "country", "summary",
+            "fields": ["id", "name", "aliases", "family", "org", "country", "summary",
                        "link_status", "scale", "endpoint_count"]}
 
 
@@ -330,6 +330,7 @@ SCHEMA_DOC: dict[str, Any] = {
         "proxy_policy": "never|fallback —— 是否允许走代理池兜底",
         "risk": "low|medium|high 合规风险",
         "tags": ["检索标签"],
+        "aliases": ["常用简称, 调用方可以直接用它代替源 id"],
         "endpoints": ["EndpointSpec 列表"],
     },
     "endpoint_spec": {

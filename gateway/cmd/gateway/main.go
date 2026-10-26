@@ -103,6 +103,7 @@ func serve(args []string, logger *log.Logger) error {
 		VerifyTLS:      cfg.VerifyTLS,
 		UserAgent:      cfg.UserAgent,
 		DefaultHeaders: cfg.Headers(),
+		HTTP2:          cfg.HTTP2,
 	})
 	if !cfg.VerifyTLS {
 		logger.Printf("warning: TLS verification is DISABLED (A_GATEWAY_VERIFY=none); never use this in production")

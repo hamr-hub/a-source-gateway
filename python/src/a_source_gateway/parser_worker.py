@@ -22,6 +22,10 @@ Go 网关把上游原始响应丢给本 worker, 本 worker 把它解析成规范
      "fields":["a","b"],"elapsed_ms":3.2}
     {"id":"req-1","ok":false,"error":"boom","error_type":"ParseError"}
 
+上游正文不是 JSON 时(**只针对 json 形状**):
+    {"id":"req-1","ok":false,"error":"上游返回的不是 JSON(疑似 HTML 错误页): <正文前若干字符>",
+     "error_type":"NotJSON","body_preview":"<正文前若干字符>"}
+
 其他 op:
     {"id":"x","op":"ping"}      -> {"id":"x","ok":true,"version":"1.0","python":"3.12.10"}
     {"id":"x","op":"shutdown"}  -> {"id":"x","ok":true}(然后干净退出)
@@ -62,6 +66,10 @@ JSON_LIMIT_BYTES = 4 * 1024 * 1024      # XML 原文上限
 TEXT_LIMIT_CHARS = 200_000             # 纯文本/解析失败时的兜底上限
 DEFAULT_MAX_ROWS = 15_000              # CSV/TSV/JSONL 最多解析的行数
 
+# 上游正文不是 JSON 时, 回带的正文前若干字符(去换行、限长)
+# 与 Go 侧 parser.NotJSONSnippetRunes 一致, 两个平面回出的片段长度相同。
+NOT_JSON_PREVIEW_CHARS = 240
+
 # 防御性上限: 单个请求的解码后正文超过这个体积就截断(避免把内存吃光)
 MAX_BODY_BYTES = 64 * 1024 * 1024
 
@@ -85,6 +93,31 @@ def _log(msg: str) -> None:
 
 
 # ── 解析(等价于 Resolver._parse) ─────────────────────────────────────────
+class NotJSONError(Exception):
+    """上游正文不是 JSON(常见于 WAF/反爬返回的 HTML 错误页)。
+
+    以前这里静默兜底成 {"_text": 原文}, 于是投影得到空列表, 而调用方(Go 网关)
+    以为这是"成功但没数据" —— 分不清"确实没有数据"和"上游给了 HTML 错误页"。
+    现在通过既有的 NDJSON 错误通道回传, error_type = "NotJSON"。
+    """
+
+    def __init__(self, preview: str):
+        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页): {preview}")
+        self.preview = preview
+
+
+def body_preview(body: str, limit: int = NOT_JSON_PREVIEW_CHARS) -> str:
+    """正文前若干字符: 换行/制表符压成空格、限长。
+
+    换行必须去掉 —— 错误消息会进 JSON 信封, 裸换行会把一行协议撑成多行。
+    与 Go 侧 parser.notJSONSnippet 的处理一致。
+    """
+    flat = body[:limit * 4].replace("\n", " ").replace("\r", " ").replace("\t", " ").strip()
+    if len(flat) > limit:
+        return flat[:limit] + "…"
+    return flat
+
+
 def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
     """把上游原始正文解析成中间结构。
 
@@ -93,7 +126,9 @@ def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
       jsonl    -> 每行一个 JSON, 空行与坏行跳过
       xml      -> {"_xml": 原文[:4MB]}
       text     -> {"_text": 原文[:200000]}
-      其它     -> json.loads; 失败则 {"_text": 原文[:200000]}(永不抛错)
+      其它     -> json.loads; 失败抛 NotJSONError(**不再静默兜底成 _text**)
+
+    xml/text 形状的 _xml/_text 兜底是**约定语义**(不是错误), 保持不变。
     """
     if shape in ("csv", "tsv"):
         delim = "\t" if shape == "tsv" else ","
@@ -125,8 +160,8 @@ def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
         return {"_text": body[:TEXT_LIMIT_CHARS]}
     try:
         return json.loads(body)
-    except Exception:                    # 不是 JSON 就当纯文本, 永不抛错
-        return {"_text": body[:TEXT_LIMIT_CHARS]}
+    except Exception:                    # 不是 JSON: 如实报错, 不静默兜底
+        raise NotJSONError(body_preview(body)) from None
 
 
 # ── 投影(等价于 Resolver._project) ───────────────────────────────────────
@@ -297,6 +332,12 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
             payload, item_path=item_path, total_field=total_field,
             item_shape=item_shape, limit=limit, fields=fields,
             item_flatten=item_flatten)
+    except NotJSONError as e:
+        # 上游正文不是 JSON: 走既有的 NDJSON 错误通道, 让 Go 网关能区分
+        # "上游给了 HTML 错误页"与"确实没有数据"。
+        _log(f"上游正文不是 JSON: {e.preview[:80]}")
+        return {"id": rid, "ok": False, "error": str(e),
+                "error_type": "NotJSON", "body_preview": e.preview}
     except Exception as e:                      # 兜底: 解析异常也要回一行
         _log(f"解析失败: {type(e).__name__}: {e}")
         return {"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}",

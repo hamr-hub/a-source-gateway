@@ -35,7 +35,9 @@ const (
 
 // Document level constants of the Python reference.
 const (
-	SchemaVersion      = "1.1"
+	// SchemaVersion is the version of the registry and of the envelope.
+	// 1.2: the source list projection carries the aliases of a source.
+	SchemaVersion      = "1.2"
 	GeneratedAt        = "2026-10-22"
 	DefaultCacheTTLS   = 900
 	DefaultBudgetMS    = 400
@@ -206,7 +208,106 @@ func Build(cfg *config.Config) (*Document, error) {
 		Count:         len(sources),
 		Families:      families,
 		Sources:       sources,
+		// The search index is computed here, once: the request path only
+		// looks things up, it never scans and normalises the sources again.
+		Search: BuildSearchIndex(sources),
 	}, nil
+}
+
+// BuildSearchIndex computes the search index of a list of sources.
+//
+// The index holds two things:
+//
+//   - the haystack of every source (the lower cased searchable text), used
+//     by the keyword search of the source list;
+//   - the exact hit tables (the canonical ids, the aliases and the names),
+//     used to resolve a caller supplied key onto a source id.
+//
+// The index is the only place where the metadata of the sources is
+// lower cased and normalised, so the request path stays allocation free.
+func BuildSearchIndex(sources []*SourceSpec) *SearchIndex {
+	idx := &SearchIndex{
+		entries:    make([]SearchEntry, 0, len(sources)),
+		AliasIndex: map[string]string{},
+		ExactIDs:   map[string]string{},
+	}
+	for _, s := range sources {
+		if s == nil {
+			continue
+		}
+		parts := make([]string, 0, 6+len(s.Aliases)+len(s.Endpoints))
+		parts = append(parts, s.ID, s.Name, s.Org, s.Country, s.Family, s.Summary)
+		parts = append(parts, s.Aliases...)
+		for _, e := range s.Endpoints {
+			if e != nil {
+				parts = append(parts, e.ID)
+			}
+		}
+		idx.entries = append(idx.entries, SearchEntry{
+			Source:   s,
+			Haystack: strings.ToLower(strings.Join(parts, "\n")),
+			NormID:   NormalizeKey(s.ID),
+			NormName: NormalizeKey(s.Name),
+		})
+		// The first source that claims an id keeps it, like the linear
+		// scan of the reference implementation.
+		if _, ok := idx.ExactIDs[s.ID]; !ok {
+			idx.ExactIDs[s.ID] = s.ID
+		}
+	}
+	// The exact hit table is filled by priority: an alias wins over a
+	// canonical id, a canonical id wins over a name. Within one priority
+	// the first source of the registry wins, exactly like the linear scan
+	// of the reference implementation.
+	for _, s := range sources {
+		if s == nil {
+			continue
+		}
+		for _, a := range s.Aliases {
+			putToken(idx.AliasIndex, NormalizeKey(a), s.ID)
+		}
+	}
+	for _, s := range sources {
+		if s == nil {
+			continue
+		}
+		putToken(idx.AliasIndex, NormalizeKey(s.ID), s.ID)
+	}
+	for _, s := range sources {
+		if s == nil {
+			continue
+		}
+		putToken(idx.AliasIndex, NormalizeKey(s.Name), s.ID)
+	}
+	return idx
+}
+
+// putToken records a normalised token, keeping the first source that claims it.
+func putToken(index map[string]string, token, sourceID string) {
+	if token == "" {
+		return
+	}
+	if _, ok := index[token]; ok {
+		return
+	}
+	index[token] = sourceID
+}
+
+// NormalizeKey strips everything that is not a lower case ASCII letter or
+// digit.
+//
+// It mirrors the normalisation of the Python reference
+// (re.sub(r"[^a-z0-9]+", "", key.lower())); both planes must keep the same
+// semantics, otherwise a key resolves on one plane and not on the other.
+func NormalizeKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // buildEndpoint converts one endpoint definition into an EndpointSpec.

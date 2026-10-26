@@ -4,7 +4,10 @@ from __future__ import annotations
 import base64
 import json
 
+import pytest
+
 from a_source_gateway.parser_worker import (
+    NotJSONError,
     handle_line,
     handle_request,
     parse_body,
@@ -122,17 +125,40 @@ def test_text_shape_is_truncated_to_200k():
     assert len(r["data"]["_text"]) == 200_000
 
 
-def test_invalid_json_falls_back_to_text():
+def test_invalid_json_is_reported_as_not_json():
+    """json 形状解析失败不再静默兜底 —— 必须报错, 否则调用方分不清
+    "确实没有数据"和"上游给了 HTML 错误页"。"""
     r = _parse("not json at all", shape="json")
-    assert r["ok"] is True
-    assert r["items"] == []
-    assert r["data"] == {"_text": "not json at all"}
+    assert r["ok"] is False
+    assert r["error_type"] == "NotJSON"
+    assert "not json at all" in r["error"]
+    assert r["body_preview"] == "not json at all"
+    assert r["id"] == "t"          # 请求 id 要带回去, 调用方靠它对账
 
 
-def test_parse_body_never_raises_on_garbage():
-    assert parse_body("<<<>>>", "json") == {"_text": "<<<>>>"}
+def test_not_json_preview_is_one_line_and_capped():
+    """回带的片段必须是单行(换行压成空格)且限长 —— 否则信封里会出现裸换行。"""
+    html = "<!DOCTYPE html>\n<html>\n" + "<p>x</p>\n" * 200 + "</html>"
+    r = _parse(html, shape="json")
+    assert r["error_type"] == "NotJSON"
+    preview = r["body_preview"]
+    assert "\n" not in preview and "\r" not in preview and "\t" not in preview
+    assert len(preview) <= 241          # 240 字 + 省略号
+    assert preview.startswith("<!DOCTYPE html> <html>")
+    # Go 网关是从 error 字段里再取片段的, 所以 error 里必须也带着正文
+    assert "<!DOCTYPE html>" in r["error"]
+
+
+def test_parse_body_only_raises_for_json_shapes():
+    """json 形状解析失败抛 NotJSONError; xml/text/csv/jsonl 永不抛错。"""
+    with pytest.raises(NotJSONError) as ei:
+        parse_body("<<<>>>", "json")
+    assert "<<<>>>" in ei.value.preview
     assert parse_body("", "jsonl") == []
     assert isinstance(parse_body("\x00\x01", "csv"), list)   # 不抛错即可
+    # xml/text 的兜底是约定语义, 不是错误
+    assert parse_body("<a/>", "xml") == {"_xml": "<a/>"}
+    assert parse_body("hello", "text") == {"_text": "hello"}
 
 
 # ── 协议层 ───────────────────────────────────────────────────────────────

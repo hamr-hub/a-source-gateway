@@ -22,7 +22,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `request_id` | string | 本次请求 id(12 位十六进制) |
-| `schema_version` | string | 信封版本,当前 `1.1` |
+| `schema_version` | string | 信封版本,当前 `1.2` |
 | `source` | string | **规范源 id**(即使用简称请求也会回报规范 id) |
 | `endpoint` | string | 端点 id |
 | `upstream` | object | `{url, method, status, latency_ms}` —— 实际打到的上游 |
@@ -53,6 +53,8 @@
 |---|---|---|
 | `timeout` | 上游超过预算 | 看 `fallback.upstream_url` 直连;或稍后重试(后台在补数) |
 | `upstream_error` | 上游返回 4xx/5xx | 看 `errors[].message` 里的上游原文 |
+| `upstream_not_json` | 上游返回的不是 JSON(常见于上游错误页/WAF 拦截页) | 看 `errors[].message` 里的正文片段;或直连 `fallback.upstream_url` 看真实情况 |
+| `parse_error` | 正文不是声明的形状(CSV/JSONL 等) | 同上,直连上游看原文 |
 | `response_too_large` | 响应超正文上限被截断 | 减小 `limit`,或直连上游 / 走批量下载 |
 | `stale` | 缓存已过期,返回陈旧值 | 视场景接受,或稍后重试 |
 | `offline` | 网关离线模式 | 只用元数据与已缓存数据 |
@@ -70,6 +72,7 @@
 {
   "id": "crossref",                 // 规范 id
   "name": "Crossref",
+  "aliases": ["crossref", "doi"],   // 常用简称(1.2 起);调用方可以直接用它代替 id
   "family": "七、学术与文献",
   "org": "Crossref",
   "country": "全球",
@@ -113,6 +116,25 @@
   "endpoints": [ ... ]               // 见 §3
 }
 ```
+
+### 2.1 关键词检索(`GET /v1/sources?q=`)
+
+`q` 对每个源的**可搜索文本**做**子串**匹配(大小写不敏感),可搜索文本 =
+规范 id + 全部别名 + 名称 + 机构 + 国别 + 分类 + 数据内容摘要 + 该源全部端点 id。
+
+命中任意一处即返回该源 —— 所以 `q=sec_edgar`(规范 id)、`q=szse`(别名)、
+`q=stock_list`(端点 id)、`q=制裁`(数据内容)都能找到源。
+
+**返回项里的 `aliases` 告诉你该用哪个简称去调用** —— "搜到 → 知道怎么调"闭环:
+
+```bash
+curl -s "http://127.0.0.1:8848/v1/sources?q=szse"
+# → {"meta":{"count":1,…},"data":[{"id":"szse","name":"深圳证券交易所 A股列表",
+#                                  "aliases":["szse","szse_stock"],…}]}
+```
+
+> 1.2 起的行为变更:此前 `q` **只**匹配名称/摘要/机构/国别/分类 ——
+> 于是出现"能按别名调用、却搜不到"(别名能解析到源,但搜不出来)。
 
 ---
 

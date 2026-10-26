@@ -57,6 +57,7 @@ A_GATEWAY_CONTACT=you@example.com docker compose up -d
 | `A_GATEWAY_CACHE_BYTES` | `33554432` | 缓存字节上限 |
 | `A_GATEWAY_PREWARM` | `1` | 启动预热 |
 | `A_GATEWAY_PARSER` | `auto` | `auto` / `python` / `go` |
+| `A_GATEWAY_HTTP2` | `1` | 上游走 HTTP/2;个别上游 h2 有问题时设 `0` |
 
 ### 1.3 启动
 

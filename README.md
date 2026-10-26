@@ -303,6 +303,7 @@ print(env.meta.total, env.meta.latency_ms, env.meta.cached)
 | `A_GATEWAY_PARSER_PYTHON` | python3 | 解析面使用的 Python 可执行文件 |
 | `A_GATEWAY_URL` | http://127.0.0.1:8848 | MCP server 转发到的网关地址 |
 | `A_GATEWAY_VERIFY` | true | 设为 `none` 关闭 TLS 校验(**生产环境不要**) |
+| `A_GATEWAY_HTTP2` | 1 | 上游走 HTTP/2(同主机多次调用复用一条连接);个别上游 h2 有问题时设 `0` |
 
 > **建议生产环境设置 `A_GATEWAY_CONTACT`**:SEC、Crossref、OpenAlex 等都会在 UA 里识别
 > 请求方,带联系方式属于负责任的使用方式,也更容易拿到官方支持。

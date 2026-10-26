@@ -165,3 +165,64 @@ func TestFetchFollowsARedirectInsideTheSameHost(t *testing.T) {
 		t.Errorf("body = %q, want the answer of the redirect target", res.Body)
 	}
 }
+
+// TestFetchUsesHTTP2WhenEnabled proves that the upstream transport really
+// negotiates HTTP/2 when it is asked to.
+//
+// The transport sets a custom DialContext, and the Go standard library
+// conservatively disables HTTP/2 in that case. Without ForceAttemptHTTP2
+// every upstream call over HTTPS pays its own TCP + TLS handshake, so the
+// protocol has to be switched back on explicitly.
+func TestFetchUsesHTTP2WhenEnabled(t *testing.T) {
+	var proto string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proto = r.Proto
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	c := New(Options{PoolSize: 2, VerifyTLS: false, HTTP2: true})
+	res, err := c.Fetch(context.Background(), "GET", srv.URL, nil, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200", res.Status)
+	}
+	if proto != "HTTP/2.0" {
+		t.Errorf("protocol = %q, want HTTP/2.0", proto)
+	}
+	if !c.transport.ForceAttemptHTTP2 {
+		t.Error("the transport must force HTTP/2")
+	}
+	if !strings.Contains(c.Describe(), "http2=true") {
+		t.Errorf("describe = %q, want it to mention http2=true", c.Describe())
+	}
+}
+
+// TestFetchStaysOnHTTP1WhenDisabled keeps the escape hatch honest:
+// A_GATEWAY_HTTP2=0 must not negotiate h2.
+func TestFetchStaysOnHTTP1WhenDisabled(t *testing.T) {
+	var proto string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proto = r.Proto
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	c := New(Options{PoolSize: 2, VerifyTLS: false, HTTP2: false})
+	res, err := c.Fetch(context.Background(), "GET", srv.URL, nil, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200", res.Status)
+	}
+	if proto != "HTTP/1.1" {
+		t.Errorf("protocol = %q, want HTTP/1.1", proto)
+	}
+}

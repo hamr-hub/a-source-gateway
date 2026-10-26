@@ -8,9 +8,11 @@ import pytest
 from a_source_gateway.config import load_config
 from a_source_gateway.registry import (
     build_registry,
+    build_search_index,
     load_cn_inventory,
     load_endpoint_defs,
     load_inventory,
+    normalize_key,
     parse_total,
     parse_unit,
 )
@@ -50,7 +52,7 @@ def test_inventory_entries_are_wellformed(inventory):
 def test_registry_shape(registry):
     assert registry["count"] >= 90
     assert len(registry["families"]) >= 8
-    assert registry["schema_version"] == "1.1"
+    assert registry["schema_version"] == "1.2"
 
 
 def test_every_source_has_full_meta(registry):
@@ -130,3 +132,50 @@ def test_registry_json_is_serialisable(registry):
     text = json.dumps(registry, ensure_ascii=False)
     assert len(text) > 50_000
     assert json.loads(text)["count"] == registry["count"]
+
+
+# ── 搜索索引(注册表构建期一次算好) ───────────────────────────────────────
+def test_normalize_key_keeps_ascii_alnum_only():
+    """归一化与 Go 侧 normalizeKey 严格一致: 小写后只留 [a-z0-9]。"""
+    assert normalize_key("SEC EDGAR") == "secedgar"
+    assert normalize_key("sec-edgar") == "secedgar"
+    assert normalize_key("SZSE_Stock") == "szsestock"
+    assert normalize_key("制裁") == ""            # 纯中文 -> 空 -> 不做模糊匹配
+    assert normalize_key("") == ""
+
+
+def test_search_index_covers_id_aliases_and_endpoint_ids(registry):
+    """haystack 必须覆盖 canonical id、全部别名、name/org/country/family/summary、端点 id。"""
+    idx = build_search_index(registry["sources"])
+    src = next(s for s in registry["sources"] if s["id"] == "sec_edgar")
+    hay = idx.haystack["sec_edgar"]
+    for token in ("sec_edgar", "edgar", "SEC EDGAR", "submissions", "companyfacts"):
+        assert token.lower() in hay, f"haystack 缺 {token}"
+    assert src["summary"].lower() in hay
+
+
+def test_search_index_alias_index_is_exact_match(registry):
+    """alias_index: 归一化 token -> source_id, 供精确命中。"""
+    idx = build_search_index(registry["sources"])
+    assert idx.alias_index["sec"] == "sec_edgar"
+    assert idx.alias_index["szse"] == "szse"
+    assert idx.alias_index["secedgar"] == "sec_edgar"
+    # 纯中文归一化后为空, 不进索引
+    assert "" not in idx.alias_index
+
+
+def test_search_index_alias_beats_same_named_id(registry):
+    """别名优先于同名 id —— 与旧的解析顺序一致(旧实现先扫别名再扫 id)。"""
+    idx = build_search_index(registry["sources"])
+    assert idx.alias_index["worldbank"] == "world_bank_open_data_wdi_wgi"
+
+
+def test_search_index_is_not_part_of_the_exported_registry(registry):
+    """索引是运行时内部结构, 不进导出的 JSON。
+
+    导出格式是两平面的对齐契约(`make parity` 逐字段比对), 索引在 Go 侧
+    是运行时自建的 —— 放进导出物会让两边的 JSON 对不上。
+    """
+    assert "search_index" not in registry
+    assert "haystack" not in registry
+    assert "alias_index" not in registry

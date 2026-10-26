@@ -46,6 +46,10 @@ services:
       # go   = 纯 Go,不拉起 Python worker
       A_GATEWAY_PARSER: "${A_GATEWAY_PARSER:-auto}"
       A_GATEWAY_OFFLINE: "${A_GATEWAY_OFFLINE:-0}"
+      # ── 传输 ──
+      # 1 = 上游走 HTTP/2(同一主机的多次调用复用一条连接,省掉重复的 TCP+TLS 握手)。
+      # 0 = 强制 HTTP/1.1 —— 只在某个上游的 h2 实现有问题时才需要。
+      A_GATEWAY_HTTP2: "${A_GATEWAY_HTTP2:-1}"
     healthcheck:
       test: ["CMD", "python3", "/usr/local/bin/healthcheck.py"]
       interval: 30s

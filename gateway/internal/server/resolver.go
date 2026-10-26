@@ -109,6 +109,7 @@ func (c *cacheValue) MarshalJSON() ([]byte, error) {
 type Resolver struct {
 	cfg     *config.Config
 	reg     *registry.Document
+	index   *registry.SearchIndex
 	cache   *cache.Cache
 	client  *upstream.Client
 	parsers *parser.Manager
@@ -132,9 +133,22 @@ func NewResolver(cfg *config.Config, reg *registry.Document, c *cache.Cache, cli
 	if logger == nil {
 		logger = log.Default()
 	}
+	// The search index is normally built together with the registry. A
+	// document that was assembled by hand (tests, tools) gets its index
+	// built here, once: the request path never builds one.
+	var index *registry.SearchIndex
+	if reg != nil {
+		index = reg.Search
+		if index == nil {
+			index = registry.BuildSearchIndex(reg.Sources)
+		}
+	} else {
+		index = registry.BuildSearchIndex(nil)
+	}
 	return &Resolver{
 		cfg:          cfg,
 		reg:          reg,
+		index:        index,
 		cache:        c,
 		client:       client,
 		parsers:      parsers,
@@ -437,12 +451,25 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 	meta.Parser = r.ParserName()
 	if parseErr != nil {
 		meta.Degraded = true
+		if status >= 400 {
+			// The upstream answered with an error status: the status
+			// belongs into the envelope. The parse error only says what
+			// came back (an HTML error page for example).
+			meta.AddErrorStatus("upstream_error", status, truncateMsg(string(res.Body)))
+		}
 		if isDeadlineError(parseErr) {
 			// The parse did not fit into the remaining budget: the call
 			// degrades exactly like an upstream timeout, the caller gets
 			// the fallback block instead of a late answer.
 			meta.AddError("timeout", fmt.Sprintf("解析超过剩余预算, 已降级(上游 %dms)", meta.Upstream.LatencyMS))
 			meta.SetFallback(url, ep.Method, "网关预算内解析不完;可直连上游, 或稍后重试(后台正在补数)")
+		} else if errors.Is(parseErr, parser.ErrNotJSON) {
+			// The upstream answered something that is not JSON (an HTML
+			// error page for example). The call is degraded and hands out
+			// the direct upstream fallback: an empty envelope would look
+			// like "the source has no data", which it is not.
+			meta.AddError("upstream_not_json", truncateMsg(parseErr.Error()))
+			meta.SetFallback(url, ep.Method, "上游返回的不是 JSON(可能是错误页);请直连上游查看原始响应")
 		} else {
 			meta.AddError("parse_error", truncateMsg(parseErr.Error()))
 			meta.SetFallback(url, ep.Method, "网关取数失败;可直连上游")
@@ -846,53 +873,47 @@ func (r *Resolver) observe(meta *envelope.Meta, cached bool) {
 // The order is: exact id, normalised alias, normalised id, normalised name,
 // substring hit. A pure non-ASCII key (for example a Chinese name) is not
 // matched at all.
+//
+// The exact hits are served by the search index of the registry: the index
+// is built once, so a request neither scans the sources nor allocates a
+// normalised copy of the metadata.
 func (r *Resolver) ResolveSource(key string) string {
 	if key == "" {
 		return ""
 	}
-	for _, s := range r.reg.Sources {
-		if s.ID == key {
-			return s.ID
-		}
+	if r.index == nil {
+		return ""
 	}
-	norm := normalizeKey(key)
+	// 精确 id: 原样命中, 优先于任何别名。
+	if id, ok := r.index.LookupExact(key); ok {
+		return id
+	}
+	norm := registry.NormalizeKey(key)
 	if norm == "" {
 		return ""
 	}
-	for _, s := range r.reg.Sources {
-		for _, a := range s.Aliases {
-			if normalizeKey(a) == norm {
-				return s.ID
-			}
-		}
+	// 别名 / 归一 id / 归一 name: 索引里按同一优先级写入, 一次命中即可。
+	if id, ok := r.index.LookupToken(norm); ok {
+		return id
 	}
-	for _, s := range r.reg.Sources {
-		if normalizeKey(s.ID) == norm {
-			return s.ID
-		}
-	}
-	for _, s := range r.reg.Sources {
-		if normalizeKey(s.Name) == norm {
-			return s.ID
-		}
-	}
-	hits := []string{}
-	for _, s := range r.reg.Sources {
-		if strings.Contains(normalizeKey(s.Name), norm) || strings.Contains(normalizeKey(s.ID), norm) {
-			hits = append(hits, s.ID)
+	// 兜底: 名称或 id 包含该关键词。多个命中时取名字最短的源。
+	hits := []registry.SearchEntry{}
+	for _, e := range r.index.Entries() {
+		if strings.Contains(e.NormName, norm) || strings.Contains(e.NormID, norm) {
+			hits = append(hits, e)
 		}
 	}
 	if len(hits) == 1 {
-		return hits[0]
+		return hits[0].Source.ID
 	}
 	if len(hits) > 1 {
 		best := hits[0]
 		for _, h := range hits[1:] {
-			if len(r.reg.Source(h).Name) < len(r.reg.Source(best).Name) {
+			if len(h.Source.Name) < len(best.Source.Name) {
 				best = h
 			}
 		}
-		return best
+		return best.Source.ID
 	}
 	return ""
 }
@@ -907,28 +928,35 @@ func (r *Resolver) GetSource(sourceID string) *registry.SourceSpec {
 }
 
 // ListSources returns the lightweight projection of the source list.
+//
+// The keyword is matched against the haystack of the source: the canonical
+// id, every alias, the name, the org, the country, the family, the summary
+// and every endpoint id. The haystack is computed when the registry is
+// built, so the search itself allocates nothing.
 func (r *Resolver) ListSources(family, q string) []any {
 	ql := strings.ToLower(q)
 	out := []any{}
-	for _, s := range r.reg.Sources {
+	if r.index == nil {
+		return out
+	}
+	for _, e := range r.index.Entries() {
+		s := e.Source
 		if family != "" && !strings.Contains(s.Family, family) {
 			continue
 		}
-		if ql != "" {
-			hit := false
-			for _, v := range []string{s.Name, s.Summary, s.Org, s.Country, s.Family} {
-				if strings.Contains(strings.ToLower(v), ql) {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
+		if ql != "" && !strings.Contains(e.Haystack, ql) {
+			continue
 		}
 		item := parser.NewObject()
 		item.Set("id", s.ID)
 		item.Set("name", s.Name)
+		// 别名让"搜到 → 知道怎么调"闭环: 搜到源之后调用方立刻知道
+		// 该用哪个简称去调用。
+		aliases := s.Aliases
+		if aliases == nil {
+			aliases = []string{}
+		}
+		item.Set("aliases", aliases)
 		item.Set("family", s.Family)
 		item.Set("org", s.Org)
 		item.Set("country", s.Country)
@@ -1243,18 +1271,6 @@ func pyStr(v any) string {
 		return "None"
 	}
 	return fmt.Sprintf("%v", v)
-}
-
-// normalizeKey strips everything that is not a lower case ASCII letter or
-// digit.
-func normalizeKey(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // isFalsy mirrors the Python truthiness test of a parameter value.

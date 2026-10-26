@@ -25,6 +25,14 @@ from types import ModuleType
 SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
+class UpstreamNotJSONError(Exception):
+    """上游正文不是 JSON(疑似 HTML 错误页 / WAF 拦截页)。
+
+    scripts/ 下两个后端(网关 + 离线镜像)各自的异常类型不同, 这里统一成
+    一个, 让调用方(verify_source.py)不用关心当前挂在哪个后端上。
+    """
+
+
 # ── 仓库定位 ─────────────────────────────────────────────────────────────
 def repo_root() -> Path:
     """仓库根: 向上找带 pyproject.toml 且带 data/ 的目录。"""
@@ -201,7 +209,23 @@ class GatewayRuntime:
             return self.resolver._project(payload, ep, req)
         return self.mirror.project(payload, ep, limit, fields or [])
 
-    def parse_body(self, body: str, shape: str):
+    def parse_body(self, body: str, shape: str, strict: bool = False):
+        """把上游正文解析成中间结构。
+
+        `strict=True` 时,上游正文不是 JSON 会抛 `UpstreamNotJSONError`
+        (而不是静默兜底成 {"_text": ...})。证据关卡据此把"上游给了错误页"
+        与"端点元数据写错了"区分开 —— 前者不该让人去改 item_path。
+        """
         if self.backend == "gateway":
-            return self.resolver._parse(body, shape)
-        return self.mirror.parse_body(body, shape)
+            # 别名导入: 否则函数内的 import 会把模块级的 UpstreamNotJSONError
+            # 变成局部名, mirror 分支的 raise 就会变成 UnboundLocalError。
+            from a_source_gateway.resolver import UpstreamNotJSONError as _RuntimeNotJSON  # noqa: PLC0415
+            try:
+                return self.resolver._parse(body, shape, strict=strict)
+            except _RuntimeNotJSON as exc:
+                raise UpstreamNotJSONError(str(exc)) from None
+        mirror = self.mirror
+        try:
+            return mirror.parse_body(body, shape, strict=strict)
+        except mirror.NotJSONError as exc:
+            raise UpstreamNotJSONError(str(exc)) from None

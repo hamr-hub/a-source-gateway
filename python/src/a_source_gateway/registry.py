@@ -13,6 +13,10 @@ registry.py - 数据源元数据注册表
 若需要离线快照, 用 `a-source-gateway build-registry --out registry.json` 导出。
 
 **加源不改代码**: 新增别名只要往 data/aliases.json 加一行(键 = CSV 里的"数据源"原文)。
+
+**搜索索引在注册表构建期一次算好**(见 `build_search_index`): 源检索/别名解析
+都用它, 请求期不再逐源跑正则。索引是运行时内部结构, 不进导出的注册表 JSON ——
+导出格式是两平面的对齐契约(`make parity` 逐字段比对), Go 侧同样在运行时自建索引。
 """
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ import json
 import logging
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -169,6 +174,95 @@ def slugify(name: str, idx: int, aliases: list[str] | None = None) -> str:
     if s:
         return s
     return f"src_{idx:03d}"
+
+
+# ── 归一化与搜索索引(注册表构建期一次算好) ───────────────────────────────
+def normalize_key(s: str) -> str:
+    """检索键归一化: 小写后只保留 [a-z0-9]。
+
+    与 Go 侧 `normalizeKey`(gateway/internal/server/resolver.go)严格一致 ——
+    两边必须逐字符相同, 否则同一个键在两个平面上会解析到不同的源。
+    纯中文等无 ASCII 字符的键归一化后为空串, 调用方据此放弃模糊匹配。
+    """
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
+
+
+# 精确命中时的优先级: 越小越优先(与旧的解析顺序一致: 别名 -> id -> name)
+_RANK_ALIAS, _RANK_ID, _RANK_NAME = 0, 1, 2
+
+
+@dataclass
+class SearchIndex:
+    """注册表构建期算好的搜索索引 —— 请求期零正则分配。
+
+    - `haystack`: source_id -> 小写可搜索文本(canonical id、name、org、country、
+      family、summary、全部别名、该源全部端点 id, 用 "\\n" 分隔)。子串匹配用。
+    - `alias_index`: 归一化 token -> source_id。精确命中用(canonical id、每个别名、
+      name 的归一化形式)。
+    - `norm_keys`: (source_id, 归一化 name, 归一化 id), 保持注册表顺序 ——
+      供"包含"式兜底(多命中时取 name 最短的源)。
+
+    三块内容的字段与拼接顺序都逐段对齐 Go 侧 `registry.BuildSearchIndex`,
+    两个平面的检索结果因此完全一致。
+    """
+
+    haystack: dict[str, str] = field(default_factory=dict)
+    alias_index: dict[str, str] = field(default_factory=dict)
+    norm_keys: list[tuple[str, str, str]] = field(default_factory=list)
+
+
+def build_search_index(sources: list[dict[str, Any]]) -> SearchIndex:
+    """在注册表构建期把搜索索引一次算好。
+
+    之前 `resolve_source` 每个请求都要逐源跑 O(n) 次正则(归一化 id/别名/name),
+    源一多就成为热路径上的固定开销; 现在全部前移到这一步。
+
+    索引是**运行时内部结构**, 不进导出的注册表 JSON —— 导出格式是两平面的
+    对齐契约(`make parity` 会逐字段比对), 索引在 Go 侧同样是运行时自建的。
+    """
+    haystack: dict[str, str] = {}
+    alias_index: dict[str, str] = {}
+    norm_keys: list[tuple[str, str, str]] = []
+    rank: dict[str, int] = {}          # token -> 已登记的优先级
+
+    def _put(token: str, sid: str, r: int) -> None:
+        """登记一个归一化 token。
+
+        优先级: 别名 > canonical id > name —— 与旧的解析顺序一致(旧实现先扫别名,
+        再扫 id, 再扫 name)。同一优先级冲突时**先登记的赢**(注册表顺序),
+        与旧实现"线性扫描取第一个命中"完全一致, 也与 Go 侧 putToken 一致。
+        """
+        if not token:
+            return
+        cur = rank.get(token)
+        if cur is None:
+            rank[token] = r
+            alias_index[token] = sid
+            return
+        if r < cur:                      # 优先级更高: 覆盖
+            rank[token] = r
+            alias_index[token] = sid
+
+    for s in sources:
+        sid = str(s.get("id", ""))
+        name = str(s.get("name", ""))
+        aliases = [str(a) for a in (s.get("aliases") or [])]
+        for a in aliases:
+            _put(normalize_key(a), sid, _RANK_ALIAS)
+        _put(normalize_key(sid), sid, _RANK_ID)
+        _put(normalize_key(name), sid, _RANK_NAME)
+
+        # 拼接顺序与 Go 侧逐段一致(id, name, org, country, family, summary,
+        # 别名, 端点 id), 两个平面的检索结果因此完全相同。
+        parts = [sid, name,
+                 str(s.get("org", "")), str(s.get("country", "")),
+                 str(s.get("family", "")), str(s.get("summary", "")),
+                 *aliases]
+        parts.extend(str(e.get("id", "")) for e in (s.get("endpoints") or []))
+        haystack[sid] = "\n".join(parts).lower()
+        norm_keys.append((sid, normalize_key(name), normalize_key(sid)))
+
+    return SearchIndex(haystack=haystack, alias_index=alias_index, norm_keys=norm_keys)
 
 
 # ── 端点定义 → EndpointSpec ──────────────────────────────────────────────
@@ -368,7 +462,7 @@ def build_registry(cfg: Config | None = None) -> dict[str, Any]:
         ))
 
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "generated_at": "2026-10-22",
         "budget_ms": cfg.budget_ms,
         "count": len(sources),

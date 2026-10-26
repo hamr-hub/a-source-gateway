@@ -24,15 +24,23 @@ import (
 // Response: {"id":"...","ok":true,"items":[...],"total":123,"truncated":false,
 //
 //	"fields":[...],"elapsed_ms":3.2}
-//	{"id":"...","ok":false,"error":"..."}
+//	{"id":"...","ok":false,"error":"...","error_type":"ParseError"}
 //
 // "op":"ping" and "op":"shutdown" are supported as well.
+//
+// The error type "NotJSON" means the body was not JSON (the upstream
+// answered an HTML error page for example). It is mapped onto the very
+// same error the Go engine produces, so that the envelope of a call looks
+// the same whichever engine is active.
 const (
 	workerModule = "a_source_gateway.parser_worker"
 	pingTimeout  = 5 * time.Second
 	// closeWait is how long the shutdown waits for the worker slot before
 	// it stops the worker without the polite shutdown request.
 	closeWait = 500 * time.Millisecond
+	// workerErrorTypeNotJSON is the error type the worker uses for a body
+	// that is not JSON.
+	workerErrorTypeNotJSON = "NotJSON"
 )
 
 // PythonEngine talks to the Python parsing plane.
@@ -223,6 +231,20 @@ func resultFromWire(obj *Object) (*Result, error) {
 		s, _ := msg.(string)
 		if s == "" {
 			s = "python parser worker reported a failure"
+		}
+		// The worker reports a body that is not JSON with the error type
+		// "NotJSON". It becomes the very same error the Go engine
+		// produces, so that the envelope of a call looks the same
+		// whichever engine is active.
+		if errType, _ := obj.Get("error_type"); errType == workerErrorTypeNotJSON {
+			// The worker sends the excerpt of the body in its own field;
+			// the message of the worker is only the fallback.
+			preview, _ := obj.Get("body_preview")
+			text, _ := preview.(string)
+			if text == "" {
+				text = s
+			}
+			return nil, NewNotJSONError(notJSONSnippet([]byte(text)), errors.New(s))
 		}
 		return nil, errors.New(s)
 	}

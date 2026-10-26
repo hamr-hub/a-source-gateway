@@ -503,10 +503,32 @@ def main(argv: list[str] | None = None) -> int:
     # 4) 断言声明的元数据
     payload: Any = None
     data: Any = None
+    body_not_json = False
     if raw_body is not None:
         text = raw_body.decode("utf-8", "replace")
-        payload = runtime.parse_body(text, shape)
-        data, total, truncated = runtime.project(payload, ep, limit=args.limit)
+        # 严格解析: 上游正文不是 JSON(错误页 / WAF 拦截页)时, 把它单独报出来。
+        # 以前这里静默兜底成 {"_text": ...}, 于是元数据断言报成
+        # "item_path=... → dict", 让人误以为是 item_path 写错了 ——
+        # 实际上要改的是上游可访问性, 不是元数据。
+        try:
+            payload = runtime.parse_body(text, shape, strict=True)
+        except _bs.UpstreamNotJSONError as exc:
+            body_not_json = True
+            payload = None
+            assertions.add("upstream_body_is_json", False, "hard",
+                           f"上游返回的不是 JSON(疑似 HTML 错误页): {exc}")
+            # 正文不是 JSON 时, item_path / total_field / 字段名断言都没有意义
+            # (拿错误页去比对路径, 只会误导)。如实记成"因上游非 JSON 跳过"。
+            assertions.add("item_path_resolves_to_list", True, "warn",
+                           "上游返回的不是 JSON, 已跳过该断言")
+            assertions.add("total_field_resolves_to_number", True, "warn",
+                           "上游返回的不是 JSON, 已跳过该断言")
+            assertions.add("declared_fields_present", True, "warn",
+                           "上游返回的不是 JSON, 已跳过该断言")
+            assertions.add("data_not_empty", True, "warn",
+                           "上游返回的不是 JSON, 已跳过该断言")
+        if payload is not None:
+            data, total, truncated = runtime.project(payload, ep, limit=args.limit)
         if upstream_status is not None and upstream_status >= 400:
             assertions.add("upstream_status_ok", False, "hard",
                            f"上游返回 HTTP {upstream_status}: {text[:200]}")
@@ -516,29 +538,30 @@ def main(argv: list[str] | None = None) -> int:
             assertions.add("upstream_status_ok", True, "hard",
                            f"上游 HTTP {upstream_status}, {len(raw_body)}B")
             assertions.add("upstream_not_error", True, "hard", "上游正常返回, 未降级")
-        if item_path:
-            node = resolve_path(payload, item_path)
-            ok = isinstance(node, list)
-            assertions.add("item_path_resolves_to_list", ok, "hard",
-                           f"item_path={item_path!r} → {type(node).__name__}"
-                           f"{f'(长度 {len(node)})' if isinstance(node, list) else ''}")
-        else:
-            assertions.add("item_path_resolves_to_list", True, "warn",
-                           "端点没声明 item_path, 跳过该断言")
-        if total_field:
-            node = resolve_path(payload, total_field)
-            ok = isinstance(node, int | float) and not isinstance(node, bool)
-            assertions.add("total_field_resolves_to_number", ok, "hard",
-                           f"total_field={total_field!r} → {node!r}")
-        else:
-            assertions.add("total_field_resolves_to_number", True, "warn",
-                           "端点没声明 total_field, 跳过该断言")
-        check_declared_fields(payload, ep, item_path, assertions)
-        if isinstance(data, list) and not data:
-            assertions.add("data_not_empty", False, "warn", "取到的是空列表(可能是过滤条件太窄)")
-        else:
-            assertions.add("data_not_empty", True, "warn",
-                           f"取到 {len(data) if isinstance(data, list) else 1} 条")
+        if payload is not None:
+            if item_path:
+                node = resolve_path(payload, item_path)
+                ok = isinstance(node, list)
+                assertions.add("item_path_resolves_to_list", ok, "hard",
+                               f"item_path={item_path!r} → {type(node).__name__}"
+                               f"{f'(长度 {len(node)})' if isinstance(node, list) else ''}")
+            else:
+                assertions.add("item_path_resolves_to_list", True, "warn",
+                               "端点没声明 item_path, 跳过该断言")
+            if total_field:
+                node = resolve_path(payload, total_field)
+                ok = isinstance(node, int | float) and not isinstance(node, bool)
+                assertions.add("total_field_resolves_to_number", ok, "hard",
+                               f"total_field={total_field!r} → {node!r}")
+            else:
+                assertions.add("total_field_resolves_to_number", True, "warn",
+                               "端点没声明 total_field, 跳过该断言")
+            check_declared_fields(payload, ep, item_path, assertions)
+            if isinstance(data, list) and not data:
+                assertions.add("data_not_empty", False, "warn", "取到的是空列表(可能是过滤条件太窄)")
+            else:
+                assertions.add("data_not_empty", True, "warn",
+                               f"取到 {len(data) if isinstance(data, list) else 1} 条")
     else:
         # 只有网关信封(没取原文): 按信封断言
         meta = envelope.get("meta") if envelope else {}
@@ -561,6 +584,10 @@ def main(argv: list[str] | None = None) -> int:
             status = "degraded"
     if upstream_status is None and transport == "direct":
         status = "unreachable"
+
+    if body_not_json:
+        # 诊断口径: 这是"上游给了错误页", 不是"端点元数据写错了"。
+        errors.append("上游返回的不是 JSON(疑似 HTML 错误页) —— 改上游可访问性, 不要改 item_path/total_field")
 
     report = build_report(src, ep, runtime, args, gateway_url, assertions, warnings, errors,
                           raw_body=raw_body, data=data, status=status, raw_meta=raw_meta,

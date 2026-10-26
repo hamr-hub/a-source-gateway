@@ -171,6 +171,22 @@ SEC 在 UA 里看不到联系邮箱时**直接 403**。网关因此:
   (0 ms),而不是让用户去猜为什么 403;
 - 配置后自动把邮箱填进端点里需要 `email`/`mailto` 的参数(如 OpenAlex 的礼貌池)。
 
+### 5.8 自定义 Dialer 会把 HTTP/2 关掉(Go 侧)
+
+Go 标准库有一条保守规则:**只要 Transport 设了自定义 `Dial` / `DialContext` / `DialTLS`
+或 `TLSClientConfig`,就默认不启用 HTTP/2**。网关的上游 transport 为了设置连接超时与
+KeepAlive 设了 `DialContext` —— 于是**每次 HTTPS 调用都退回 HTTP/1.1**。
+
+代价是实打实的:同一主机的第 N 次调用要重新走一次 TCP + TLS 握手(境外 2 个 RTT),
+而预热阶段会成组地打同一主机的多个端点(政府政策库、交易所列表都在一个域名下)。
+
+修法是显式把协议打开:`Transport.ForceAttemptHTTP2 = true`(ALPN 协商,上游不支持 h2
+就自动回落 HTTP/1.1,不会失败)。开关:`A_GATEWAY_HTTP2=0` 强制 HTTP/1.1 ——
+只在上游的 h2 实现有问题时才需要。
+
+> 与 Python 参照面的**有意分歧**:httpx 要用 h2 得装 `h2` 包,本项目不把它列为依赖。
+> Python 平面是回落路径,Go 网关才是主运行时 —— 传输协议不属于信封/注册表的语义契约。
+
 ---
 
 ## 6. 调参
@@ -183,6 +199,7 @@ SEC 在 UA 里看不到联系邮箱时**直接 403**。网关因此:
 | `A_GATEWAY_MAX_BODY_BYTES` | 1048576 | 需要更大的 JSON 响应时可调大,但会推高解析耗时 |
 | `A_GATEWAY_WARM_BUDGET_MS` | 30000 | 慢上游(EUROSTAT 目录实测 7.5–30 s)需要更长的补数预算 |
 | `A_GATEWAY_CACHE_TTL_S` | 900 | 数据新鲜度要求高时调小 |
+| `A_GATEWAY_HTTP2` | 1 | 上游 h2 实现有问题时设为 `0`(见 §5.8) |
 
 ---
 

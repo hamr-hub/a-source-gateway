@@ -82,5 +82,5 @@ def test_envelope_fallback_is_always_present():
 
 def test_request_serialises_with_schema_version():
     d = QueryRequest(source="s", endpoint="e").to_dict()
-    assert d["schema_version"] == "1.1"
+    assert d["schema_version"] == "1.2"
     assert d["source"] == "s" and d["endpoint"] == "e"

@@ -14,6 +14,7 @@ func TestLoadDefaults(t *testing.T) {
 		"A_GATEWAY_CACHE_TTL_S", "A_GATEWAY_WARM_BUDGET_MS", "A_GATEWAY_PREWARM",
 		"A_GATEWAY_CONTACT", "A_GATEWAY_UA", "A_GATEWAY_OFFLINE", "A_GATEWAY_VERIFY",
 		"A_GATEWAY_DATA_DIR", "A_GATEWAY_PARSER", "A_GATEWAY_PARSER_PYTHON",
+		"A_GATEWAY_HTTP2",
 	} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
@@ -42,6 +43,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if !c.VerifyTLS {
 		t.Error("TLS verification must default to true")
+	}
+	if !c.HTTP2 {
+		t.Error("HTTP/2 must default to true")
 	}
 	if c.ParserMode != ParserAuto || c.ParserPython != "python3" {
 		t.Errorf("parser = %q/%q", c.ParserMode, c.ParserPython)
@@ -76,6 +80,20 @@ func TestLoadOverrides(t *testing.T) {
 	want := "a-source-gateway/1.0 (+ops@example.com)"
 	if c.UserAgent != want {
 		t.Errorf("ua = %q, want %q", c.UserAgent, want)
+	}
+}
+
+// A_GATEWAY_HTTP2=0 turns the protocol off for upstreams with a broken h2 stack.
+func TestHTTP2CanBeDisabled(t *testing.T) {
+	t.Setenv("A_GATEWAY_HTTP2", "0")
+	c := Load()
+	if c.HTTP2 {
+		t.Error("A_GATEWAY_HTTP2=0 must disable HTTP/2")
+	}
+	t.Setenv("A_GATEWAY_HTTP2", "1")
+	c = Load()
+	if !c.HTTP2 {
+		t.Error("A_GATEWAY_HTTP2=1 must enable HTTP/2")
 	}
 }
 

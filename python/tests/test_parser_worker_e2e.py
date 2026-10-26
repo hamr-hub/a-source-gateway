@@ -362,13 +362,21 @@ def test_xml_fallback_projects_xml_bytes(worker: Worker) -> None:
     assert resp["truncated"] is False
 
 
-def test_text_fallback_for_non_json_body(worker: Worker) -> None:
+def test_non_json_body_is_reported_as_not_json(worker: Worker) -> None:
+    """非 JSON 正文走错误通道(error_type=NotJSON), 不再静默兜底成 _text。
+
+    Go 网关按 error_type 映射成信封里的 upstream_not_json 降级。
+    """
     body = "not json at all"
     worker.send(_parse_req("c-7", body, shape="object"))
     resp = worker.read_response()
-    assert resp["ok"] is True
-    assert resp["items"] == []
-    assert resp["data"] == {"_text": body}
+    assert resp["ok"] is False
+    assert resp["error_type"] == "NotJSON"
+    assert resp["body_preview"] == body
+    assert body in resp["error"]
+    # worker 本身不能被这条请求弄死: 下一条照样有响应
+    worker.send({"id": "after-not-json", "op": "ping"})
+    assert worker.read_response()["id"] == "after-not-json"
 
 
 def test_csv_shape_parses_rows(worker: Worker) -> None:

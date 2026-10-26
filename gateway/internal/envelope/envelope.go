@@ -21,7 +21,9 @@ import (
 )
 
 // SchemaVersion is the envelope schema version.
-const SchemaVersion = "1.1"
+//
+// 1.2: the source list projection carries the aliases of a source.
+const SchemaVersion = "1.2"
 
 // Upstream describes the upstream call of a query.
 type Upstream struct {

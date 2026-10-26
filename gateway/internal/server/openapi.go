@@ -66,7 +66,7 @@ func pathsObject() *parser.Object {
 	sources.Set("get", op("源清单(可按 family/q 过滤, 轻量投影)",
 		[]any{
 			paramQuery("family", "按分类过滤, 模糊匹配", "string", false),
-			paramQuery("q", "关键词, 搜名称/描述/机构/国别", "string", false),
+			paramQuery("q", "关键词, 搜源 id/别名/名称/描述/机构/国别/端点 id", "string", false),
 			paramQuery("limit", "最多返回多少条", "integer", false),
 		}, nil, nil))
 	paths.Set("/v1/sources", sources)

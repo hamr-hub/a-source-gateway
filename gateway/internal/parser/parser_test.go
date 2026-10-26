@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -234,9 +236,11 @@ func TestGoEngineParsesJSON(t *testing.T) {
 	}
 }
 
+// The text shape is not supposed to carry JSON: its body is passed through
+// as the "_text" marker, exactly like the reference does.
 func TestGoEngineFallsBackToText(t *testing.T) {
 	eng := NewGoEngine(100)
-	res, err := eng.Parse(context.Background(), "object", "text/plain", []byte("not json"), Spec{})
+	res, err := eng.Parse(context.Background(), "text", "text/plain", []byte("not json"), Spec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +250,48 @@ func TestGoEngineFallsBackToText(t *testing.T) {
 	}
 	if v, _ := obj.Get("_text"); v != "not json" {
 		t.Errorf("_text = %v", v)
+	}
+}
+
+// The XML shape is not supposed to carry JSON either: its body is passed
+// through as the "_xml" marker and it is never an error.
+func TestGoEngineXMLShapeKeepsTheXMLFallback(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<root><a>1</a></root>")
+	res, err := eng.Parse(context.Background(), "xml", "application/xml", body, Spec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Marshal(res.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`{"_xml_bytes":%d,"_truncated":false}`, len(body))
+	if string(out) != want {
+		t.Errorf("data = %s, want %s", out, want)
+	}
+}
+
+// A JSON shape whose body is not JSON is **not** an empty result: the caller
+// has to be able to tell "the source has no data" apart from "the upstream
+// answered an HTML error page". The error is detectable and carries the head
+// of the body, so that the reason is visible at a glance.
+func TestGoEngineReportsNotJSONForAJSONShape(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<!DOCTYPE html>\n<html><head><title>502 Bad Gateway</title></head></html>")
+	_, err := eng.Parse(context.Background(), "object", "application/json", body, Spec{})
+	if err == nil {
+		t.Fatal("a body that is not JSON must be an error, not an empty result")
+	}
+	if !errors.Is(err, ErrNotJSON) {
+		t.Errorf("error = %v, want it to match ErrNotJSON", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "<!DOCTYPE html>") {
+		t.Errorf("error = %q, want the head of the body", msg)
+	}
+	if strings.Contains(msg, "\n") {
+		t.Errorf("error = %q, the excerpt must be a single line", msg)
 	}
 }
 
@@ -280,6 +326,57 @@ func TestGoEngineRespectsMaxRows(t *testing.T) {
 // TestGoEngineXMLProjectionKeepsTheKeyOrder checks the key order of the XML
 // projection: it is the insertion order of the Python reference
 // ({"_xml_bytes": N, "_truncated": bool}), not the sorted order of a Go map.
+// The worker reports a body that is not JSON with the error type "NotJSON":
+// it becomes the very same error the Go engine produces, so that the
+// envelope of a call looks the same whichever engine is active.
+func TestWorkerNotJSONIsMappedOntoErrNotJSON(t *testing.T) {
+	reply := NewObject()
+	reply.Set("id", "gw-1")
+	reply.Set("ok", false)
+	reply.Set("error", "\u4e0a\u6e38\u54cd\u5e94\u4e0d\u662f JSON: invalid character '<'; \u6b63\u6587\u7247\u6bb5: <!DOCTYPE html><html>")
+	reply.Set("error_type", "NotJSON")
+
+	_, err := resultFromWire(reply)
+	if err == nil {
+		t.Fatal("the worker failure must be an error")
+	}
+	if !errors.Is(err, ErrNotJSON) {
+		t.Errorf("error = %v, want it to match ErrNotJSON", err)
+	}
+	if !strings.Contains(err.Error(), "<!DOCTYPE html>") {
+		t.Errorf("error = %q, want the excerpt of the body", err)
+	}
+}
+
+// Any other worker failure stays a plain parse error: only the "NotJSON"
+// type is a content problem, not a worker problem.
+func TestWorkerParseErrorIsNotMappedOntoErrNotJSON(t *testing.T) {
+	reply := NewObject()
+	reply.Set("id", "gw-1")
+	reply.Set("ok", false)
+	reply.Set("error", "boom")
+	reply.Set("error_type", "ParseError")
+
+	_, err := resultFromWire(reply)
+	if err == nil {
+		t.Fatal("the worker failure must be an error")
+	}
+	if errors.Is(err, ErrNotJSON) {
+		t.Errorf("error = %v, want a plain error", err)
+	}
+}
+
+// The excerpt of a body that is not JSON is a single line.
+func TestNotJSONSnippetIsSingleLine(t *testing.T) {
+	snippet := notJSONSnippet([]byte("<html>\n\t<body>\n502\n</body>\n</html>"))
+	if strings.ContainsAny(snippet, "\n\r\t") {
+		t.Errorf("snippet = %q, want a single line", snippet)
+	}
+	if !strings.Contains(snippet, "502") {
+		t.Errorf("snippet = %q, want the head of the body", snippet)
+	}
+}
+
 func TestGoEngineXMLProjectionKeepsTheKeyOrder(t *testing.T) {
 	eng := NewGoEngine(100)
 	body := []byte("<root><a>1</a></root>")

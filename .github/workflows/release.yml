@@ -50,7 +50,7 @@ jobs:
               go build -trimpath -ldflags "-s -w -X ${GOMOD}/internal/config.Version=${VERSION}" \
               -o "$bin" ./cmd/gateway
           done
-      - name: 打包(二进制 + 事实源 + 许可)
+      - name: 打包(二进制 + 事实源 + 许可 + 文档)
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -64,7 +64,12 @@ jobs:
             mkdir -p "$stage/data"
             cp "$archive" "$stage/a-source-gateway"
             cp data/source_inventory.csv data/source_inventory_cn.csv data/endpoints.json data/aliases.json "$stage/data/"
-            cp LICENSE NOTICE README.md "$stage/"
+            cp LICENSE NOTICE README.md CHANGELOG.md AGENTS.md "$stage/"
+            # 文档站 / 方案文档 / 工具链一起发:下载 tarball 的人不用回仓库就能看文档、
+            # 跑 verify_source.py / demo.py。缺了它们,离线用户等于没有说明书。
+            cp -r site "$stage/site"
+            cp -r docs "$stage/docs"
+            cp -r scripts "$stage/scripts"
             tar -czf "dist/${base}.tar.gz" -C "$stage" .
             rm -rf "$stage"
           done

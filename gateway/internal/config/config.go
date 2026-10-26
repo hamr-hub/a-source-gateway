@@ -27,12 +27,12 @@ const (
 //
 // It is a var, not a const, so the build can inject the real value:
 //
-//	go build -ldflags "-X github.com/hamr-hub/a-source-gateway/gateway/internal/config.Version=1.1.0"
+//	go build -ldflags "-X github.com/hamr-hub/a-source-gateway/gateway/internal/config.Version=1.3.0"
 //
 // The Makefile and release workflow both read the version from pyproject.toml
 // (the single source of truth) and inject it, so the Go binary and the Python
 // package can never report different versions.
-var Version = "1.1.0"
+var Version = "1.3.0"
 
 // Config is the fully resolved runtime configuration.
 type Config struct {
@@ -61,6 +61,14 @@ type Config struct {
 	UserAgent string
 	Offline   bool
 	VerifyTLS bool
+	// HTTP2 enables HTTP/2 for upstream calls (ALPN negotiation).
+	//
+	// The upstream transport sets a custom DialContext, which makes the Go
+	// standard library conservatively disable HTTP/2. Forcing it back on
+	// lets the gateway multiplex repeated calls to one host over a single
+	// connection instead of paying a TCP + TLS handshake per call.
+	// A_GATEWAY_HTTP2=0 turns it off for upstreams with a broken h2 stack.
+	HTTP2 bool
 
 	// Data files.
 	DataDir string
@@ -99,6 +107,7 @@ func Load() *Config {
 		DataDir:          envStr("A_GATEWAY_DATA_DIR", ""),
 		ParserMode:       strings.ToLower(envStr("A_GATEWAY_PARSER", ParserAuto)),
 		ParserPython:     envStr("A_GATEWAY_PARSER_PYTHON", "python3"),
+		HTTP2:            envBool("A_GATEWAY_HTTP2", true),
 	}
 	c.VerifyTLS = strings.ToLower(envStr("A_GATEWAY_VERIFY", "true")) != "none"
 

@@ -388,6 +388,67 @@ func (s *SourceSpec) Endpoint(id string) *EndpointSpec {
 	return nil
 }
 
+// SearchEntry is one source inside the registry search index.
+//
+// The entry carries the texts the search runs against, precomputed once
+// when the registry is built: a request never lower cases or normalises
+// the metadata of the sources again.
+type SearchEntry struct {
+	// Source is the source this entry belongs to.
+	Source *SourceSpec
+	// Haystack is the lower cased searchable text of the source: the
+	// canonical id, every alias, the name, the org, the country, the
+	// family, the summary and every endpoint id, joined with "\n".
+	Haystack string
+	// NormID is the normalised id (lower case ASCII alphanumerics only).
+	NormID string
+	// NormName is the normalised name (lower case ASCII alphanumerics only).
+	NormName string
+}
+
+// SearchIndex is the search index of the registry.
+//
+// It is built once, at the end of the registry build. The request path
+// only looks things up: it never scans the sources and never allocates a
+// normalised copy of the metadata.
+type SearchIndex struct {
+	entries []SearchEntry
+	// AliasIndex maps a normalised token onto a source id. It holds the
+	// aliases, the canonical ids and the names. The aliases win over the
+	// ids and the ids win over the names, which is the resolution order
+	// of the reference implementation.
+	AliasIndex map[string]string
+	// ExactIDs maps a source id (verbatim) onto itself.
+	ExactIDs map[string]string
+}
+
+// Entries returns the index entries in registry order.
+func (i *SearchIndex) Entries() []SearchEntry {
+	if i == nil {
+		return nil
+	}
+	return i.entries
+}
+
+// LookupExact returns the source id of an exact id hit.
+func (i *SearchIndex) LookupExact(id string) (string, bool) {
+	if i == nil {
+		return "", false
+	}
+	v, ok := i.ExactIDs[id]
+	return v, ok
+}
+
+// LookupToken returns the source id of a normalised token hit (an alias, a
+// canonical id or a name).
+func (i *SearchIndex) LookupToken(token string) (string, bool) {
+	if i == nil {
+		return "", false
+	}
+	v, ok := i.AliasIndex[token]
+	return v, ok
+}
+
 // Document is the registry document (the same structure as the Python
 // build-registry output).
 type Document struct {
@@ -397,6 +458,9 @@ type Document struct {
 	Count         int
 	Families      []string
 	Sources       []*SourceSpec
+	// Search is the search index of the sources. It is built together
+	// with the document and is not part of the exported JSON.
+	Search *SearchIndex
 }
 
 // ToObject renders the registry document as an ordered object.

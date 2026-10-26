@@ -21,6 +21,7 @@ import (
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/envelope"
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/metrics"
 	"github.com/hamr-hub/a-source-gateway/gateway/internal/parser"
+	"github.com/hamr-hub/a-source-gateway/gateway/internal/registry"
 )
 
 // MaxBodyBytes bounds the size of a request body.
@@ -234,11 +235,11 @@ func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 	meta.Set("family", family)
 	meta.Set("q", keyword)
 	meta.Set("latency_ms", 0)
-	meta.Set("schema_version", "1.1")
+	meta.Set("schema_version", registry.SchemaVersion)
 	doc := parser.NewObject()
 	doc.Set("meta", meta)
 	doc.Set("data", items)
-	doc.Set("fields", []any{"id", "name", "family", "org", "country", "summary",
+	doc.Set("fields", []any{"id", "name", "aliases", "family", "org", "country", "summary",
 		"link_status", "scale", "endpoint_count"})
 	writeJSON(w, http.StatusOK, doc)
 }
@@ -252,7 +253,7 @@ func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := parser.NewObject()
 	meta.Set("source", sourceID)
-	meta.Set("schema_version", "1.1")
+	meta.Set("schema_version", registry.SchemaVersion)
 	doc := parser.NewObject()
 	doc.Set("meta", meta)
 	doc.Set("data", src)
@@ -270,7 +271,7 @@ func (s *Server) handleDescribeEndpoint(w http.ResponseWriter, r *http.Request) 
 	meta := parser.NewObject()
 	meta.Set("source", sourceID)
 	meta.Set("endpoint", endpointID)
-	meta.Set("schema_version", "1.1")
+	meta.Set("schema_version", registry.SchemaVersion)
 	doc := parser.NewObject()
 	doc.Set("meta", meta)
 	doc.Set("data", data)

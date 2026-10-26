@@ -19,6 +19,10 @@ import (
 // The Go engine is always available as a safety net: if the Python worker
 // fails mid-flight, the request is served by the Go engine and the gateway
 // switches over permanently.
+//
+// A worker that answers correctly is not a failure: a body that is not JSON
+// (an HTML error page of an upstream for example) comes back as the
+// ErrNotJSON error and does not switch the engine over.
 type Manager struct {
 	mode     string
 	logger   *log.Logger
@@ -80,10 +84,15 @@ func (m *Manager) Parse(ctx context.Context, shape, mediaType string, body []byt
 	if active.Name() == "go" {
 		return nil, err
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		// The request ran out of time, not the worker: the Python plane
-		// stays active. The Go fallback would not have any time left
-		// either, the deadline is gone for both engines.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, ErrNotJSON) {
+		// The request ran out of time, or the upstream answered something
+		// that is not JSON (an HTML error page for example): neither is the
+		// worker's fault, the worker answered correctly.
+		//
+		// The Python plane stays active. A Go fallback would not have any
+		// time left either when the deadline is gone, and an error page of
+		// one upstream must not switch the parsing engine of the whole
+		// process.
 		return nil, err
 	}
 	m.logger.Printf("warning: python parser worker failed (%v); falling back to the Go engine", err)

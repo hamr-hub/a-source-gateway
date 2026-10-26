@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,19 +30,88 @@ const (
 	TextLimitBytes = 200000
 	// JSONLMaxRows caps the number of parsed JSON Lines records.
 	JSONLMaxRows = 15000
+	// NotJSONSnippetRunes caps the excerpt of the body that is carried by
+	// a NotJSONError. It is long enough to recognise an HTML error page
+	// and short enough for one log line.
+	NotJSONSnippetRunes = 240
 )
+
+// ErrNotJSON reports that an upstream body is not JSON.
+//
+// An upstream that answers with an HTML error page (a gateway error, a
+// captcha, a maintenance page) is not an empty result: the caller has to
+// be able to tell the two apart. The error is detectable with errors.Is.
+var ErrNotJSON = errors.New("上游响应不是 JSON")
+
+// NotJSONError is the concrete form of ErrNotJSON: it carries an excerpt of
+// the body, so that the reason is visible at a glance ("<!DOCTYPE html>…").
+type NotJSONError struct {
+	// Snippet is a single line excerpt of the upstream body.
+	Snippet string
+	// Cause is the underlying decoding error.
+	Cause error
+}
+
+// Error implements error.
+//
+// The excerpt is not repeated when the cause already carries it (the
+// Python worker puts the excerpt into its message).
+func (e *NotJSONError) Error() string {
+	msg := "上游响应不是 JSON"
+	if e.Cause != nil && e.Snippet != "" && !strings.Contains(e.Cause.Error(), e.Snippet) {
+		msg += ": " + e.Cause.Error()
+	} else if e.Cause != nil && e.Snippet == "" {
+		msg += ": " + e.Cause.Error()
+	}
+	if e.Snippet != "" {
+		msg += "; 正文片段: " + e.Snippet
+	}
+	return msg
+}
+
+// Unwrap makes errors.Is(err, ErrNotJSON) true.
+func (e *NotJSONError) Unwrap() error { return ErrNotJSON }
+
+// NewNotJSONError builds a NotJSONError out of a body excerpt.
+func NewNotJSONError(snippet string, cause error) error {
+	return &NotJSONError{Snippet: snippet, Cause: cause}
+}
+
+// notJSONSnippet turns the head of an upstream body into a single line
+// excerpt: newlines are flattened and the length is capped, so that an HTML
+// error page stays readable inside one log line.
+func notJSONSnippet(body []byte) string {
+	raw := string(body)
+	if len(raw) > NotJSONSnippetRunes*4 {
+		raw = raw[:NotJSONSnippetRunes*4]
+	}
+	raw = strings.ToValidUTF8(raw, "")
+	flat := strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		}
+		return r
+	}, raw)
+	flat = strings.TrimSpace(flat)
+	rs := []rune(flat)
+	if len(rs) > NotJSONSnippetRunes {
+		return string(rs[:NotJSONSnippetRunes]) + "…"
+	}
+	return flat
+}
 
 // Spec describes where the items live inside an upstream payload and how
 // they have to be trimmed. It maps 1:1 onto the "spec" object of the Python
 // worker protocol.
 type Spec struct {
-	ItemPath   string   `json:"item_path"`
-	TotalField string   `json:"total_field"`
-	ItemShape  string   `json:"item_shape"`
+	ItemPath   string `json:"item_path"`
+	TotalField string `json:"total_field"`
+	ItemShape  string `json:"item_shape"`
 	// ItemFlatten flattens one level when the located list holds lists
 	// (e.g. the SSE bulletin index nests each record in its own array).
-	ItemFlatten bool `json:"item_flatten"`
-	Limit       int  `json:"limit"`
+	ItemFlatten bool     `json:"item_flatten"`
+	Limit       int      `json:"limit"`
 	Fields      []string `json:"fields"`
 	MaxRows     int      `json:"max_rows"`
 	// TraceID correlates the parse with the gateway request. It is not part
@@ -123,7 +193,13 @@ func (g *GoEngine) Parse(ctx context.Context, shape, mediaType string, body []by
 //
 // It mirrors Resolver._parse of the Python reference: CSV/TSV become lists of
 // rows, JSON Lines become a list of objects, XML and text are passed through
-// as markers, and everything else is parsed as JSON with a text fallback.
+// as markers, and everything else is parsed as JSON.
+//
+// A JSON shape whose body is not JSON is **not** an empty result: it is
+// reported as ErrNotJSON, so that the gateway can degrade the call and hand
+// out the direct upstream fallback instead of an empty envelope. The XML and
+// text shapes keep their pass through behaviour: there the body is not
+// supposed to be JSON at all.
 //
 // The context bounds the work: the decoding of a big document is not free
 // and must not push the call past its budget.
@@ -147,7 +223,10 @@ func (g *GoEngine) parseBody(ctx context.Context, shape string, body []byte, max
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return NewObjectWith("_text", truncateBytes(body, TextLimitBytes)), nil
+		// The upstream answered something that is not JSON (an HTML error
+		// page for example). Saying so is the only honest answer: an
+		// empty envelope would look like "the source has no data".
+		return nil, NewNotJSONError(notJSONSnippet(body), err)
 	}
 	return v, nil
 }

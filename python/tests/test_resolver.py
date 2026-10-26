@@ -299,3 +299,145 @@ async def test_offline_mode_never_hits_network():
     assert env.meta.offline is True
     assert called["n"] == 0
     await r.shutdown()
+
+
+# ── 源检索(覆盖 canonical id / 别名 / 端点 id) ────────────────────────────
+def test_search_matches_canonical_id():
+    """q 命中 canonical id —— 以前只搜 name/summary/org/country/family, 搜不到。"""
+    r = make_resolver(json_handler({}))
+    ids = [s["id"] for s in r.list_sources(q="sec_edgar")]
+    assert "sec_edgar" in ids
+
+
+def test_search_matches_alias():
+    """q 命中别名: 能按简称调用, 就必须搜得到。"""
+    r = make_resolver(json_handler({}))
+    hits = r.list_sources(q="szse")
+    assert [s["id"] for s in hits] == ["szse"]
+    assert hits[0]["name"] == "深圳证券交易所 A股列表"
+
+
+def test_search_matches_endpoint_id():
+    """q 命中端点 id: 调用方往往只知道"哪个接口", 不知道源的简称。"""
+    r = make_resolver(json_handler({}))
+    ids = [s["id"] for s in r.list_sources(q="submissions")]
+    assert "sec_edgar" in ids
+
+
+def test_search_still_matches_the_old_fields():
+    """旧的可搜索字段不能丢(中文摘要/机构/国别/分类)。"""
+    r = make_resolver(json_handler({}))
+    assert len(r.list_sources(q="制裁")) == 10
+    assert r.list_sources(q="制裁")[0]["id"] == "ofac_sdn"
+
+
+def test_search_keeps_registry_order_and_family_filter():
+    """顺序按注册表稳定; family 过滤语义不变(仍是 family 字段子串匹配)。"""
+    r = make_resolver(json_handler({}))
+    every = r.list_sources()
+    assert [s["id"] for s in every] == [s["id"] for s in r.sources.values()]
+    # 同一个 q 两次调用结果一致(顺序稳定)
+    assert r.list_sources(q="a") == r.list_sources(q="a")
+    sanctions = r.list_sources(family="制裁")
+    assert sanctions and all("制裁" in s["family"] for s in sanctions)
+    # family 与 q 同时给: 两个条件都要满足
+    both = r.list_sources(family="制裁", q="ofac")
+    assert all("制裁" in s["family"] for s in both)
+    assert {s["id"] for s in both} <= {s["id"] for s in sanctions}
+
+
+def test_projection_exposes_aliases():
+    """投影新增 aliases: 调用方搜到源之后要知道该用哪个简称去调用。
+
+    约定: 该键**始终在场**, 没有别名时给空数组(调用方不用 .get 兜底)。
+    """
+    r = make_resolver(json_handler({}))
+    by_id = {s["id"]: s for s in r.list_sources()}
+    assert by_id["szse"]["aliases"] == ["szse", "szse_stock"]
+    assert by_id["sec_edgar"]["aliases"] == ["sec", "edgar", "sec_edgar"]
+    no_alias = [s for s in by_id.values() if not s["aliases"]]
+    assert no_alias, "注册表里应有没别名的源"
+    for s in no_alias:
+        assert s["aliases"] == []      # 缺省是空数组, 不是省略
+
+
+# ── resolve_source: 语义必须与改造前完全一致 ──────────────────────────────
+def test_resolve_source_keeps_existing_semantics():
+    r = make_resolver(json_handler({}))
+    # 精确 id
+    assert r.resolve_source("sec_edgar") == "sec_edgar"
+    # 别名
+    assert r.resolve_source("sec") == "sec_edgar"
+    assert r.resolve_source("ctgov") == "clinicaltrials_gov_v2"
+    assert r.resolve_source("ofac") == "ofac_sdn"
+    assert r.resolve_source("ch") == "uk_companies_house"
+    assert r.resolve_source("gleif") == "gleif_lei"
+    assert r.resolve_source("wdi") == "world_bank_open_data_wdi_wgi"
+    # 归一化后的 id / name
+    assert r.resolve_source("SEC EDGAR") == "sec_edgar"
+    assert r.resolve_source("sec-edgar") == "sec_edgar"
+    # 别名优先于同名的 id(name 更短也不能抢): 旧实现先扫别名
+    assert r.resolve_source("worldbank") == "world_bank_open_data_wdi_wgi"
+    # 纯中文键不做模糊匹配
+    assert r.resolve_source("制裁") is None
+    assert r.resolve_source("根本不存在的源") is None
+    assert r.resolve_source("") is None
+
+
+# ── 上游返回非 JSON 正文: 如实标降级 ─────────────────────────────────────
+HTML_ERROR_PAGE = ("<!DOCTYPE html>\n<html><head><title>503</title></head>\n"
+                   "<body>Service Unavailable</body></html>")
+
+
+async def test_non_json_upstream_body_degrades_instead_of_faking_empty():
+    """上游给 HTML 错误页时: 必须 degraded, 不能是"成功 + 0 条"。"""
+    r = make_resolver(lambda request: httpx.Response(200, text=HTML_ERROR_PAGE))
+    await r.startup()
+    env = await r.query(QueryRequest(source="crossref", endpoint="works",
+                                      params={"filter": "x"}, limit=1))
+    assert env.meta.degraded is True
+    assert [e["type"] for e in env.meta.errors] == ["upstream_not_json"]
+    assert env.meta.errors[0]["type"] == "upstream_not_json"
+    assert env.meta.fallback.get("upstream_url", "").startswith("https://api.crossref.org")
+    assert "503" in env.meta.errors[0]["message"]      # 带回正文前若干字符
+    assert "\n" not in env.meta.errors[0]["message"]    # 换行必须去掉
+    await r.shutdown()
+
+
+async def test_non_json_upstream_body_is_not_cached():
+    """HTML 错误页绝不能进缓存 —— 否则 TTL 内一直拿到假空壳。"""
+    r = make_resolver(lambda request: httpx.Response(200, text=HTML_ERROR_PAGE))
+    await r.startup()
+    await r.query(QueryRequest(source="crossref", endpoint="works",
+                               params={"filter": "x"}, limit=1))
+    assert r.cache.stats()["entries"] == 0
+    await r.shutdown()
+
+
+async def test_upstream_error_status_keeps_its_own_error_type():
+    """状态码 >= 400 的正文仍按 upstream_error 报(状态码才是根因)。
+
+    两条原因都报(与 Go 侧顺序一致): upstream_error 在前, upstream_not_json 在后。
+    """
+    r = make_resolver(lambda request: httpx.Response(500, text="boom"))
+    await r.startup()
+    env = await r.query(QueryRequest(source="crossref", endpoint="works",
+                                      params={"filter": "x"}, limit=1))
+    assert env.meta.degraded is True
+    assert env.meta.errors[0]["type"] == "upstream_error"
+    assert env.meta.errors[0]["status"] == 500
+    assert [e["type"] for e in env.meta.errors] == ["upstream_error", "upstream_not_json"]
+    await r.shutdown()
+
+
+async def test_xml_and_text_shapes_are_not_flagged_as_degraded():
+    """xml/text 形状的兜底是约定语义, 不是错误 —— 不能误判成降级。"""
+    cases = [("ofac_sdn", "sdn_xml", "<root><a>1</a></root>"),
+             ("edinet", "document", "EDINET 原文不是 JSON")]
+    for source, endpoint, body in cases:
+        r = make_resolver(lambda request, _body=body: httpx.Response(200, text=_body))
+        await r.startup()
+        env = await r.query(QueryRequest(source=source, endpoint=endpoint, limit=1))
+        assert env.meta.degraded is False, f"{source}/{endpoint} 被误判成降级"
+        assert not env.meta.errors
+        await r.shutdown()

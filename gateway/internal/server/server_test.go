@@ -243,7 +243,7 @@ func TestSchemaDocumentMatchesTheReference(t *testing.T) {
 			t.Errorf("the schema document is missing %q", key)
 		}
 	}
-	if doc["schema_version"] != "1.1" {
+	if doc["schema_version"] != "1.2" {
 		t.Errorf("schema_version = %v", doc["schema_version"])
 	}
 }

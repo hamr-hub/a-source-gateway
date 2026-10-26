@@ -24,6 +24,7 @@ import httpx
 from .cache import BoundedCache
 from .compat import timeout_ctx
 from .config import Config, load_config
+from .registry import build_search_index, normalize_key
 from .schema import (
     DEFAULT_BUDGET_MS,
     QueryRequest,
@@ -43,6 +44,36 @@ PREWARM_CONCURRENCY = 6                 # 预热并发(串行要十几分钟, �
 
 # 端点专有请求头里的 ${VAR} 引用(凭据从环境变量读, 不进数据文件)
 _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+# 上游正文不是 JSON 时, 在错误里回带的正文前若干字符(去换行、限长)
+# 与 Go 侧 parser.NotJSONSnippetRunes 一致, 两个平面回出的片段长度相同。
+NOT_JSON_PREVIEW_CHARS = 240
+
+
+def body_preview(body: str, limit: int = NOT_JSON_PREVIEW_CHARS) -> str:
+    """正文前若干字符: 换行/制表符压成空格、限长。
+
+    用途是让调用方一眼看出"上游给的是 HTML 错误页而不是数据" ——
+    换行必须去掉, 否则错误消息会被撑成多行, 日志和信封都不好读。
+    与 Go 侧 parser.notJSONSnippet 的处理一致。
+    """
+    flat = body[:limit * 4].replace("\n", " ").replace("\r", " ").replace("\t", " ").strip()
+    if len(flat) > limit:
+        return flat[:limit] + "…"
+    return flat
+
+
+class UpstreamNotJSONError(Exception):
+    """上游正文不是 JSON(常见于 WAF/反爬返回的 HTML 错误页)。
+
+    以前这里静默兜底成 {"_text": 原文}, 于是投影得到空列表, 而 meta.degraded
+    仍是 false —— 调用方分不清"确实没有数据"和"上游给了错误页"。现在它必须
+    让调用方看见降级。
+    """
+
+    def __init__(self, preview: str):
+        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页): {preview}")
+        self.preview = preview
 
 
 def _dig_path(node: Any, path: str) -> Any:
@@ -105,6 +136,8 @@ class Resolver:
         self.cfg = cfg or load_config()
         self.registry = registry
         self.sources: dict[str, dict[str, Any]] = {s["id"]: s for s in registry["sources"]}
+        # 搜索索引在注册表构建期一次算好: 请求期不再逐源跑正则(见 registry.build_search_index)
+        self.search = build_search_index(registry["sources"])
         self.offline = offline
         self.cache = cache or BoundedCache()
         self._client: httpx.AsyncClient | None = None
@@ -169,28 +202,24 @@ class Resolver:
     def resolve_source(self, key: str) -> str | None:
         """把用户给的标识解析成源 id。
 
-        顺序: 精确 id -> 名称(忽略大小写/空格) -> 名称 slug -> 名称或摘要包含。
+        顺序: 精确 id -> 别名 -> id 归一 -> name 归一 -> 名称/id 包含。
         故意宽松: MCP/LLM 调用方常常用简称("ctgov"、"sec"、"ofac")。
+
+        全部走注册表期算好的索引(registry.SearchIndex), 请求期零正则分配;
+        语义与改造前逐条对齐(见 registry.build_search_index 的优先级说明)。
         """
         if not key:
             return None
         if key in self.sources:
             return key
-        norm = re.sub(r"[^a-z0-9]+", "", key.lower())
+        norm = normalize_key(key)
         if not norm:                   # 纯中文等无 ASCII 字符的键, 不做模糊匹配
             return None
-        for sid, s in self.sources.items():
-            if norm in [re.sub(r"[^a-z0-9]+", "", a.lower()) for a in s.get("aliases", [])]:
-                return sid
-        for sid in self.sources:
-            if re.sub(r"[^a-z0-9]+", "", sid.lower()) == norm:
-                return sid
-        for sid, src in self.sources.items():
-            if re.sub(r"[^a-z0-9]+", "", src["name"].lower()) == norm:
-                return sid
-        hits = [sid for sid, s in self.sources.items()
-                if norm and (norm in re.sub(r"[^a-z0-9]+", "", s["name"].lower())
-                             or norm in re.sub(r"[^a-z0-9]+", "", s["id"].lower()))]
+        sid = self.search.alias_index.get(norm)
+        if sid:
+            return sid
+        hits = [sid for sid, n_name, n_id in self.search.norm_keys
+                if norm in n_name or norm in n_id]
         if len(hits) == 1:
             return hits[0]
         if hits:                       # 多个命中: 取名字最短的(通常是主源)
@@ -202,17 +231,25 @@ class Resolver:
         return self.sources.get(rid) if rid else None
 
     def list_sources(self, family: str = "", q: str = "") -> list[dict[str, Any]]:
-        """轻量投影, 不返回 endpoints, 保持响应小。"""
+        """轻量投影, 不返回 endpoints, 保持响应小。
+
+        `q` 对每个源的**可搜索文本**做子串匹配(大小写不敏感): canonical id、
+        全部别名、name、org、country、family、summary、该源全部端点 id。
+        以前只匹配 name/summary/org/country/family, 于是"能按别名调用、却搜不到"。
+        """
         out = []
         ql = q.lower()
         for s in self.sources.values():
             if family and family not in s["family"]:
                 continue
-            if ql and not any(ql in str(s.get(k, "")).lower()
-                              for k in ("name", "summary", "org", "country", "family")):
+            if ql and ql not in self.search.haystack.get(s["id"], ""):
                 continue
             out.append({
-                "id": s["id"], "name": s["name"], "family": s["family"],
+                "id": s["id"], "name": s["name"],
+                # 别名: 调用方搜到源之后要知道该用哪个简称去调用。
+                # 没有别名时给空数组(键始终在场, 调用方不用 .get 兜底)。
+                "aliases": [str(a) for a in (s.get("aliases") or [])],
+                "family": s["family"],
                 "org": s["org"], "country": s["country"],
                 "summary": s["summary"][:160],
                 "link_status": s.get("link_status", ""),
@@ -360,9 +397,9 @@ class Resolver:
             status, body, truncated = await self._fetch(ep, url, timeout_s)
             meta.upstream.latency_ms = int((time.perf_counter() - t_up) * 1000)
             meta.upstream.status = status
-            payload = self._parse(body, ep["response"].get("shape", "object"))
             if truncated:
                 # 正文超上限被截断 -> JSON 多半解析不了, 明确降级而不是静默返回空
+                # (截断判定必须排在解析之前: 否则"太大"会被误报成"不是 JSON")
                 meta.degraded = True
                 meta.errors.append({"type": "response_too_large",
                                     "message": f"响应超过 {self.cfg.max_body_bytes // 1024 // 1024}MB 上限被截断;"
@@ -376,6 +413,10 @@ class Resolver:
                 meta.count = len(data) if isinstance(data, list) else 0
                 meta.latency_ms = int(now_ms() - t0)
                 return ResponseEnvelope(meta=meta, data=data, fields=req.fields)
+            # 正文必须是 JSON —— 否则多半是 WAF/反爬的 HTML 错误页,
+            # 静默兜底成 {"_text": ...} 会让调用方把"上游报错"误读成"没有数据"。
+            # (状态码 >= 400 的正文同样要判: 状态码与"不是 JSON"两条原因都报)
+            payload = self._parse(body, ep["response"].get("shape", "object"), strict=True)
             if status < 400:          # 只缓存成功响应
                 ttl = self._adaptive_ttl(ep, cache_key)
                 if _is_empty_payload(payload) and ttl > EMPTY_PAYLOAD_TTL_SECONDS:
@@ -389,6 +430,25 @@ class Resolver:
                 meta.degraded = True
                 meta.errors.append({"type": "upstream_error", "status": status,
                                     "message": body[:300]})
+        except UpstreamNotJSONError as e:
+            # 上游给了非 JSON 正文(多半是 HTML 错误页): 如实标降级, 别装成"成功 + 0 条"
+            meta.degraded = True
+            status = meta.upstream.status or 0
+            if status >= 400:
+                # 状态码 >= 400: 状态码才是根因, 先报它(与 Go 侧顺序一致)
+                meta.errors.append({"type": "upstream_error", "status": status,
+                                    "message": body[:300]})
+            meta.errors.append({"type": "upstream_not_json",
+                                "message": str(e)[:300]})
+            meta.fallback = {"upstream_url": url, "method": ep["method"],
+                             "hint": "上游返回的不是 JSON(疑似 HTML 错误页); "
+                                     "请直连上游确认, 或稍后重试"}
+            self._schedule_warm(ep_ctx, url, cache_key)
+            data, total, truncated = self._fallback(val, ep, req)
+            meta.cached = val is not None
+            meta.cache_age_s = age
+            meta.count = len(data) if isinstance(data, list) else 0
+            meta.total = total
         except (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException):
             # 注: 3.11 起 asyncio.TimeoutError 就是内建 TimeoutError 的别名;
             # 3.10 上它们是两个类, 所以两个都捕获 —— 否则 3.10 的超时会漏到通用分支,
@@ -512,14 +572,18 @@ class Resolver:
                     await asyncio.sleep(1.0)
                     status, body, truncated = await self._fetch(
                         ep, url, self.cfg.warm_budget_ms / 1000.0)
-                payload = self._parse(body, ep["response"].get("shape", "object"))
                 if truncated:
                     # 文件型大响应(OFAC 29MB XML / HMLR CSV 之类): 截断的残片没有缓存价值,
                     # 也不该占缓存。改为记录状态, 让查询侧直接给"请直连上游"的指引。
+                    # (截断判定排在解析之前: 残片本来就解析不出 JSON)
                     self._too_large.add(ep.get("_page_key", ""))
                     self.warm_fills += 1
                     return
                 if status < 400:
+                    # 严格解析: HTML 错误页绝不能进缓存(否则 TTL 内一直拿到假空壳)。
+                    # 与 Go 侧一致 —— 失败就当预热失败, 不写缓存。
+                    payload = self._parse(body, ep["response"].get("shape", "object"),
+                                          strict=True)
                     ttl = self._adaptive_ttl(ep, cache_key)
                     # 后台补数与用户请求用同一把尺子: 空结果不钉死整个 TTL
                     if _is_empty_payload(payload) and ttl > EMPTY_PAYLOAD_TTL_SECONDS:
@@ -705,7 +769,14 @@ class Resolver:
                 p[k] = page_size
         return f"{req.source}|{req.endpoint}|{url}|{sorted(p.items())}"
 
-    def _parse(self, body: str, shape: str) -> Any:
+    def _parse(self, body: str, shape: str, strict: bool = False) -> Any:
+        """把上游正文解析成中间结构。
+
+        `strict=True` 时, json 形状解析失败会抛 UpstreamNotJSONError(而不是
+        静默兜底成 {"_text": 原文}) —— 查询路径用它把"上游给了 HTML 错误页"
+        如实标成降级。默认 lenient, 供只需要拿到原始文本的调用方使用
+        (scripts/ 侧的 verify/demo 就是这么用的)。
+        """
         if shape in ("csv", "tsv"):
             delim = "\t" if shape == "tsv" else ","
             rows = []
@@ -734,6 +805,8 @@ class Resolver:
         try:
             return json.loads(body)
         except Exception:
+            if strict:
+                raise UpstreamNotJSONError(body_preview(body)) from None
             return {"_text": body[:200_000]}
 
     def _project(self, payload: Any, ep: dict[str, Any], req: QueryRequest

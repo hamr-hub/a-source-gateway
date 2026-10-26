@@ -219,7 +219,8 @@ _TOOL_SPECS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "family": {"type": "string", "description": "分类关键词, 如 '制裁'"},
-                    "q": {"type": "string", "description": "关键词, 搜名称/描述/机构/国别"},
+                    "q": {"type": "string",
+                          "description": "关键词, 搜名称/别名/源 id/端点 id/描述/机构/国别"},
                     "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
                 },
             },

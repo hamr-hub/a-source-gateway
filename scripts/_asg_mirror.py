@@ -302,7 +302,36 @@ def render_url(ep: dict, params: dict | None, page_size: int | None = None,
 
 
 # ── 响应解析与投影(与 Resolver._parse / _project 一致) ───────────────────
-def parse_body(body: str, shape: str) -> Any:
+NOT_JSON_PREVIEW_CHARS = 240
+
+
+class NotJSONError(Exception):
+    """上游正文不是 JSON(常见于上游错误页 / WAF 拦截页)。
+
+    与运行时的 `a_source_gateway.resolver.UpstreamNotJSONError` 同义:
+    静默兜底成 {"_text": 原文} 会让调用方把"上游报错"误读成"没有数据"。
+    """
+
+    def __init__(self, preview: str):
+        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页): {preview}")
+        self.preview = preview
+
+
+def body_preview(body: str, limit: int = NOT_JSON_PREVIEW_CHARS) -> str:
+    """正文前若干字符: 换行/制表符压成空格、限长。
+
+    与运行时 `resolver.body_preview` 的处理一致(240 字符、单行)。
+    """
+    flat = " ".join(body[: limit * 4].split())
+    return flat[:limit]
+
+
+def parse_body(body: str, shape: str, strict: bool = False) -> Any:
+    """把上游正文解析成中间结构。
+
+    `strict=True` 时,json 形状解析失败会抛 NotJSONError(而不是静默兜底) ——
+    证据关卡据此把"上游给了错误页"与"元数据写错了"区分开。
+    """
     if shape in ("csv", "tsv"):
         delim = "\t" if shape == "tsv" else ","
         rows = []
@@ -331,6 +360,9 @@ def parse_body(body: str, shape: str) -> Any:
     try:
         return json.loads(body)
     except Exception:
+        if strict:
+            # 证据关卡要区分"上游给了错误页"和"元数据写错了" —— 不能静默兜底。
+            raise NotJSONError(body_preview(body)) from None
         return {"_text": body[:200_000]}
 
 

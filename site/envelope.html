@@ -86,7 +86,7 @@
   "meta": {
     "request_id": "",
     "trace_id": "a89c0fbebbae1b64e5dfa8d30e261d6a",
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "source": "gleif_lei",
     "endpoint": "lei_records",
     "parser": "python",
@@ -151,7 +151,7 @@
           <tbody>
             <tr><td><code>request_id</code></td><td>string</td><td>本次请求 id</td><td>Go 网关目前<strong>恒为空字符串</strong>（Python 参照实现会生成 12 位 hex）。做关联请用 <code>trace_id</code></td></tr>
             <tr><td><code>trace_id</code></td><td>string</td><td>贯穿网关日志、上游调用与解析 worker 的关联 id</td><td>总是有：入站带 <code>X-Gateway-Trace-Id</code> / <code>X-Request-Id</code> 就复用，否则随机生成 32 位 hex</td></tr>
-            <tr><td><code>schema_version</code></td><td>string</td><td>信封结构版本</td><td>总是有，恒为 <code>"1.1"</code></td></tr>
+            <tr><td><code>schema_version</code></td><td>string</td><td>信封结构版本</td><td>总是有，恒为 <code>"1.2"</code></td></tr>
             <tr><td><code>source</code></td><td>string</td><td>实际命中的源 id</td><td>总是有。传入别名时这里给的是解析后的<strong>规范 id</strong></td></tr>
             <tr><td><code>endpoint</code></td><td>string</td><td>端点 id</td><td>总是有</td></tr>
             <tr><td><code>parser</code></td><td>string</td><td>真正解析出数据的引擎</td><td>总是有：<code>"python"</code> 或 <code>"go"</code></td></tr>
@@ -263,7 +263,7 @@
   "meta": {
     "request_id": "",
     "trace_id": "a89c0fbebbae1b64e5dfa8d30e261d6a",
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "source": "gleif_lei",
     "endpoint": "lei_records",
     "parser": "python",
@@ -420,6 +420,7 @@ X-Gateway-Trace-Id: ac9f72d36d8df3283905a136c399b306
             <tr><td><code>timeout</code></td><td>上游超过 400ms 预算，或解析用完了剩余预算</td><td><span class="badge ok">200</span></td><td>上游超过 400ms 预算, 已降级</td></tr>
             <tr><td><code>budget_exceeded</code></td><td>客户端可见耗时超过本次预算</td><td><span class="badge ok">200</span></td><td>客户端可见耗时 520ms 超过预算 500ms</td></tr>
             <tr><td><code>upstream_error</code></td><td>上游返回 ≥400 的状态码（带 <code>status</code>）</td><td><span class="badge ok">200</span></td><td>上游响应体前 300 字符</td></tr>
+            <tr><td><code>upstream_not_json</code></td><td>上游返回的不是 JSON（常见于上游错误页 / WAF 拦截页）</td><td><span class="badge ok">200</span></td><td>上游返回的不是 JSON(疑似 HTML 错误页): &lt;!DOCTYPE html&gt;…</td></tr>
             <tr><td><code>parse_error</code></td><td>上游返回了，但按端点定义解析不出来</td><td><span class="badge ok">200</span></td><td>解析器报错信息（截到 300 字符）</td></tr>
             <tr><td><code>response_too_large</code></td><td>响应体超过上限被截断，或端点是文件型大响应</td><td><span class="badge ok">200</span></td><td>响应超过 1MB 上限被截断;请减小 limit 或直连上游</td></tr>
             <tr><td><code>missing_param</code></td><td>缺端点要求的必填参数</td><td><span class="badge ok">200</span></td><td>缺少必填参数 cik</td></tr>

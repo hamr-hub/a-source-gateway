@@ -15,7 +15,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = "1.1"   # 1.1: 端点 response 新增 item_flatten(列表套列表展平一层)
+SCHEMA_VERSION = "1.2"   # 1.2: 源检索覆盖 canonical id/别名/端点 id; 源投影新增 aliases; 非 JSON 正文如实标降级(upstream_not_json)
 DEFAULT_BUDGET_MS = 500
 UPSTREAM_BUDGET_MS = 400      # 上游取数的墙钟上限
 RESERVE_MS = 100              # 留给解析/投影/序列化/框架开销的余量

@@ -458,6 +458,322 @@ func TestResolveSourceOrder(t *testing.T) {
 	}
 }
 
+// The resolution runs on the search index of the registry now. Its
+// semantics must not move: exact id, alias, normalised id, normalised name,
+// substring hit, and the shortest name wins when several sources match.
+func TestResolveSourceSemanticsOnTheSearchIndex(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
+	cases := []struct{ key, want, why string }{
+		{"sec_edgar", "sec_edgar", "精确 id"},
+		{"SEC_EDGAR", "sec_edgar", "归一 id"},
+		{"doi", "crossref", "别名"},
+		{"DOI", "crossref", "归一别名"},
+		{"SEC EDGAR", "sec_edgar", "归一名称"},
+		{"cros", "crossref", "名称包含"},
+		{"s", "crossref", "多个命中时取名字最短的源"},
+		{"", "", "空键"},
+		{"中文源", "", "纯中文键不匹配"},
+		{"nothing-like-this", "", "未知键"},
+	}
+	for _, c := range cases {
+		if got := r.ResolveSource(c.key); got != c.want {
+			t.Errorf("ResolveSource(%q) = %q, want %q (%s)", c.key, got, c.want, c.why)
+		}
+	}
+}
+
+// ── 源发现(search) ────────────────────────────────────────────────────
+
+// realRegistryResolver builds a resolver on top of the registry the data
+// files produce. The search only reads the registry, so no upstream is
+// needed.
+func realRegistryResolver(t *testing.T) *Resolver {
+	t.Helper()
+	cfg := config.Load()
+	reg, err := registry.Build(cfg)
+	if err != nil {
+		t.Fatalf("registry.Build: %v", err)
+	}
+	logger := log.New(io.Discard, "", 0)
+	return NewResolver(cfg, reg, cache.New(4, 1<<20), nil, nil, metrics.New(), ratelimit.New(1), logger)
+}
+
+// listedIDs returns the ids of a source list projection.
+func listedIDs(items []any) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		obj, ok := it.(*parser.Object)
+		if !ok {
+			continue
+		}
+		id, _ := obj.Get("id")
+		if s, ok := id.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// The keyword search has to reach the canonical id, the aliases and the
+// endpoint ids: a caller that can call a source by its alias must be able
+// to find it as well.
+func TestListSourcesFindsCanonicalIDAliasAndEndpointID(t *testing.T) {
+	r := realRegistryResolver(t)
+	cases := []struct {
+		q      string
+		wantID string
+		why    string
+	}{
+		{"sec_edgar", "sec_edgar", "canonical id"},
+		{"edgar", "sec_edgar", "alias"},
+		{"szse", "szse", "id 与别名重合"},
+		{"szse_stock", "szse", "只有别名"},
+		{"stock_list", "szse", "端点 id"},
+	}
+	for _, c := range cases {
+		ids := listedIDs(r.ListSources("", c.q))
+		found := false
+		for _, id := range ids {
+			if id == c.wantID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ListSources(q=%q) = %v, want it to contain %q (%s)", c.q, ids, c.wantID, c.why)
+		}
+	}
+}
+
+// The keyword search is case insensitive.
+func TestListSourcesKeywordIsCaseInsensitive(t *testing.T) {
+	r := realRegistryResolver(t)
+	lower := listedIDs(r.ListSources("", "sec_edgar"))
+	upper := listedIDs(r.ListSources("", "SEC_EDGAR"))
+	if len(lower) == 0 {
+		t.Fatalf("ListSources(q=%q) is empty", "sec_edgar")
+	}
+	if len(lower) != len(upper) {
+		t.Errorf("q=sec_edgar -> %v, q=SEC_EDGAR -> %v, want the same hits", lower, upper)
+	}
+}
+
+// The order of the list follows the order of the registry.
+func TestListSourcesKeepsTheRegistryOrder(t *testing.T) {
+	r := realRegistryResolver(t)
+	ids := listedIDs(r.ListSources("", ""))
+	if len(ids) == 0 {
+		t.Fatal("the source list is empty")
+	}
+	var want []string
+	for _, s := range r.Registry().Sources {
+		want = append(want, s.ID)
+	}
+	if len(ids) != len(want) {
+		t.Fatalf("the list has %d sources, want %d", len(ids), len(want))
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("the list is not in registry order: %v", ids)
+		}
+	}
+}
+
+// The family filter keeps its semantics: it is a substring match on the
+// family of the source.
+func TestListSourcesFamilyFilterStillWorks(t *testing.T) {
+	r := realRegistryResolver(t)
+	all := listedIDs(r.ListSources("", ""))
+	filtered := listedIDs(r.ListSources("证券监管", ""))
+	if len(filtered) == 0 {
+		t.Fatal("the family filter matched nothing")
+	}
+	if len(filtered) >= len(all) {
+		t.Errorf("the family filter matched %d of %d sources", len(filtered), len(all))
+	}
+	for _, id := range filtered {
+		src := r.Registry().Source(id)
+		if src == nil || !strings.Contains(src.Family, "证券监管") {
+			t.Errorf("the family filter let %q through", id)
+		}
+	}
+}
+
+// The projection carries the aliases of the source: "搜到 → 知道怎么调"
+// has to close inside one response.
+func TestListSourcesProjectionCarriesTheAliases(t *testing.T) {
+	r := realRegistryResolver(t)
+	items := r.ListSources("", "szse")
+	if len(items) == 0 {
+		t.Fatal("ListSources(q=szse) is empty")
+	}
+	obj, ok := items[0].(*parser.Object)
+	if !ok {
+		t.Fatalf("item = %T", items[0])
+	}
+	raw, ok := obj.Get("aliases")
+	if !ok {
+		t.Fatal("the projection has no aliases")
+	}
+	list, ok := raw.([]string)
+	if !ok {
+		t.Fatalf("aliases = %T, want a string array", raw)
+	}
+	hit := false
+	for _, a := range list {
+		if a == "szse_stock" {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Errorf("aliases = %v, want it to contain szse_stock", list)
+	}
+}
+
+// A source without aliases gets an empty array, not a missing key: the
+// caller must be able to read the field without checking for it.
+func TestListSourcesProjectionAlwaysCarriesTheAliasesKey(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {})
+	items := r.ListSources("", "contact_source")
+	if len(items) == 0 {
+		t.Fatal("ListSources(q=contact_source) is empty")
+	}
+	obj, ok := items[0].(*parser.Object)
+	if !ok {
+		t.Fatalf("item = %T", items[0])
+	}
+	raw, ok := obj.Get("aliases")
+	if !ok {
+		t.Fatal("the projection has no aliases key")
+	}
+	list, ok := raw.([]string)
+	if !ok {
+		t.Fatalf("aliases = %T, want a string array", raw)
+	}
+	if len(list) != 0 {
+		t.Errorf("aliases = %v, want an empty array", list)
+	}
+}
+
+// ── 上游返回非 JSON 正文 ───────────────────────────────────────────────
+
+// An upstream that answers with an HTML error page is not an empty result:
+// the call has to degrade and hand out the direct upstream fallback.
+func TestUpstreamHTMLDegradesAsNotJSON(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!DOCTYPE html>\n<html><head><title>502 Bad Gateway</title></head></html>"))
+	})
+	env := r.Query(QueryRequest{Source: "crossref", Endpoint: "works",
+		Params: params("filter", "x"), Limit: 20, TimeoutMS: 500}, nil)
+	if !env.Meta.Degraded {
+		t.Fatalf("the envelope must be degraded: %+v", env.Meta.Errors)
+	}
+	if !hasError(env.Meta.Errors, "upstream_not_json") {
+		t.Errorf("errors = %+v, want an upstream_not_json error", env.Meta.Errors)
+	}
+	if env.Meta.Fallback == nil {
+		t.Fatal("the envelope has no fallback block")
+	}
+	raw, _ := env.Meta.Fallback.Get("upstream_url")
+	upstreamURL, _ := raw.(string)
+	if upstreamURL == "" {
+		t.Errorf("fallback = %v, want a non empty upstream_url", env.Meta.Fallback)
+	}
+	if list, ok := env.Data.([]any); !ok || len(list) != 0 {
+		t.Errorf("data = %#v, want an empty list", env.Data)
+	}
+}
+
+// The message of the error has to show what the upstream answered, so that
+// the caller sees that it was an error page.
+func TestUpstreamNotJSONErrorCarriesTheBodyExcerpt(t *testing.T) {
+	r := newTestResolver(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<!DOCTYPE html><html><body>Service Unavailable</body></html>"))
+	})
+	env := r.Query(QueryRequest{Source: "crossref", Endpoint: "works",
+		Params: params("filter", "x"), Limit: 20, TimeoutMS: 500}, nil)
+	var msg string
+	for _, e := range env.Meta.Errors {
+		if e.Type == "upstream_not_json" {
+			msg = e.Message
+		}
+	}
+	if msg == "" {
+		t.Fatalf("errors = %+v, want an upstream_not_json error", env.Meta.Errors)
+	}
+	if !strings.Contains(msg, "<!DOCTYPE html>") {
+		t.Errorf("message = %q, want the head of the body", msg)
+	}
+}
+
+// newRawShapeResolver builds a resolver whose only endpoint answers with the
+// given shape, so that the pass through of a body that is not JSON can be
+// checked.
+func newRawShapeResolver(t *testing.T, shape string) *Resolver {
+	t.Helper()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<root><a>1</a></root>"))
+	}))
+	t.Cleanup(up.Close)
+
+	cfg := config.Load()
+	cfg.Contact = "test@example.com"
+	cfg.BudgetMS = 500
+	cfg.UpstreamBudgetMS = 400
+	cfg.ReserveMS = 100
+	cfg.MaxBodyBytes = 1024 * 1024
+	cfg.Offline = false
+
+	src := &registry.SourceSpec{
+		ID:      "raw_source",
+		Name:    "Raw Source",
+		Family:  "其他",
+		Aliases: []string{"raw"},
+		Auth:    registry.AuthSpec{Type: "none"},
+		Endpoints: []*registry.EndpointSpec{{
+			ID:          "raw",
+			Name:        "原始正文",
+			Method:      "GET",
+			URLTemplate: up.URL + "/raw",
+			CacheTTLS:   900,
+			BudgetMS:    400,
+			Response:    registry.ResponseSpec{MediaType: "text/plain", Shape: shape},
+		}},
+	}
+	doc := &registry.Document{
+		SchemaVersion: registry.SchemaVersion,
+		GeneratedAt:   "2026-10-22",
+		BudgetMS:      500,
+		Count:         1,
+		Families:      []string{"其他"},
+		Sources:       []*registry.SourceSpec{src},
+	}
+	logger := log.New(io.Discard, "", 0)
+	return NewResolver(cfg, doc, cache.New(8, 1<<20),
+		upstream.New(upstream.Options{PoolSize: 2, VerifyTLS: true, UserAgent: cfg.UserAgent}),
+		parser.NewManager(context.Background(), "go", "python3", "", 1000, logger),
+		metrics.New(), ratelimit.New(2), logger)
+}
+
+// The xml and the text shape are not supposed to carry JSON: their body is
+// passed through and the call must not be degraded.
+func TestXMLAndTextShapesAreNotDegraded(t *testing.T) {
+	for _, shape := range []string{"xml", "text"} {
+		r := newRawShapeResolver(t, shape)
+		env := r.Query(QueryRequest{Source: "raw_source", Endpoint: "raw",
+			Limit: 20, TimeoutMS: 500}, nil)
+		if env.Meta.Degraded {
+			t.Errorf("shape %s: the envelope must not be degraded: %+v", shape, env.Meta.Errors)
+		}
+		for _, e := range env.Meta.Errors {
+			if e.Type == "upstream_not_json" {
+				t.Errorf("shape %s: the call must not be marked as a non JSON upstream", shape)
+			}
+		}
+	}
+}
+
 // ── query pipeline ───────────────────────────────────────────────────
 
 func jsonHandler(payload string) http.HandlerFunc {

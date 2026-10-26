@@ -28,6 +28,7 @@
 #   A_GATEWAY_CACHE_TTL_S=900      缓存 TTL(秒)
 #   A_GATEWAY_PREWARM=1            启动时预热缓存
 #   A_GATEWAY_OFFLINE=0            离线模式:完全不发网络请求
+#   A_GATEWAY_HTTP2=1              上游走 HTTP/2(同主机多次调用复用一条连接)
 #   A_GATEWAY_PARSER=auto          auto(默认)|python|go
 #                                  go = 纯 Go 运行,不拉起 Python worker,
 #                                  用于"镜像里没有 Python"的极限场景
