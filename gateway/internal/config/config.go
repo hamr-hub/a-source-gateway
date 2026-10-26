@@ -27,12 +27,12 @@ const (
 //
 // It is a var, not a const, so the build can inject the real value:
 //
-//	go build -ldflags "-X github.com/hamr-hub/a-source-gateway/gateway/internal/config.Version=1.4.0"
+//	go build -ldflags "-X github.com/hamr-hub/a-source-gateway/gateway/internal/config.Version=1.4.1"
 //
 // The Makefile and release workflow both read the version from pyproject.toml
 // (the single source of truth) and inject it, so the Go binary and the Python
 // package can never report different versions.
-var Version = "1.4.0"
+var Version = "1.4.1"
 
 // Config is the fully resolved runtime configuration.
 type Config struct {

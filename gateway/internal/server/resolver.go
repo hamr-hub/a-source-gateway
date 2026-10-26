@@ -470,6 +470,14 @@ func (r *Resolver) Query(req QueryRequest, budgetMS *int) *envelope.Envelope {
 			// like "the source has no data", which it is not.
 			meta.AddError("upstream_not_json", truncateMsg(parseErr.Error()))
 			meta.SetFallback(url, ep.Method, "上游返回的不是 JSON(可能是错误页);请直连上游查看原始响应")
+		} else if errors.Is(parseErr, parser.ErrNotShape) {
+			// The upstream answered something that is not the shape the
+			// endpoint declared (a csv/tsv endpoint got an XML/HTML error
+			// page, a jsonl endpoint got rows none of which parse). The
+			// hint says so: "网关取数失败" would send the caller looking
+			// in the wrong place.
+			meta.AddError("parse_error", truncateMsg(parseErr.Error()))
+			meta.SetFallback(url, ep.Method, "上游返回的不是声明的形状(疑似错误页); 请直连上游确认, 或稍后重试")
 		} else {
 			meta.AddError("parse_error", truncateMsg(parseErr.Error()))
 			meta.SetFallback(url, ep.Method, "网关取数失败;可直连上游")

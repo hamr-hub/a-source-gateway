@@ -2,6 +2,40 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.1] - 2026-10-26
+
+信息准确性:堵住非 JSON 形状上的"假成功";并给新接口补上延迟基线。
+
+### 修复
+- **非 JSON 形状的"假成功"**:csv / tsv 端点拿到上游的 HTML/XML 错误页时,以前
+  把错误页当**数据行**返回(`degraded=false`、`count=2`,内容是 HTML 碎片);
+  jsonl 端点则跳过所有坏行得到空列表(`degraded=false`、`count=0`)。两者都是
+  "成功但没有数据"的假成功 —— 调用方分不清"确实没有数据"和"上游给了错误页",
+  这正是 1.3.0 给 `json` 形状修过的那类问题。现在这类**形状不匹配**会显式降级:
+  `degraded=true` + `errors[].type=parse_error` + 直连指引 + `data=[]`。
+  - 判定规则: csv/tsv 的正文看起来是标记语言(以 `<!doctype` / `<html` / `<?xml`
+    开头,或以 `<` 开头且前 512 字节内有 `</`);jsonl 有非空行却一行都解析不成功。
+  - 波及 8 个已接入端点:BIS `consolidated_csv`、ECB `series_csv`、Eurostat `toc`、
+    FRED `series_csv`、HMLR `monthly_csv`、OFAC `sdn_csv`、OpenSanctions `entities`、
+    UK ONS `version_csv`。
+  - 两个平面与三份 Python 解析实现(参照面 / worker / stdlib 镜像)给出**逐字相同**
+    的结论与文案:`上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: …`;
+    有跨平面一致性测试守着,另有反向回归(字段以 `<` 开头的合法 CSV 仍原样返回)。
+- **空正文时 `upstream_not_json` 的文案两平面不一致**:Go 侧在正文片段为空时不追加
+  `; 正文片段: ` 后缀,Python 侧一直追加。现在两边一致。
+- **EIA API 的限速口径不再是"无"**:实测无 key 时 403 `API_KEY_MISSING`、
+  复用同一 key 会 429 `OVER_RATE_LIMIT`,清单按实测事实改写(原来写"无"是误导)。
+
+### 变更
+- **`bench` 纳入 `POST /v1/search` 用例**:新接口第一次有延迟基线 —— 搜索的墙钟由
+  **最慢的那一个源**决定,实测两个关键词用例 p95 198.3ms / 406.8ms,均在 500ms 内;
+  选源本身(纯元数据)只占 p50 0.325–0.394ms,不是瓶颈。
+- **CSV 行尾契约变成显式校验**:`validate` 现在检查 `data/*.csv` 是否纯 CRLF。
+  行尾被工具悄悄改成 LF 时,整份清单会变成一份 108 行的**假 diff**,混在真实改动里
+  几乎看不出来 —— 本轮它已经这样发生过两次,现在是一条明确的报错。
+- **国内清单的行尾归一化为 CRLF**:它从 1.2.0 落地起就是 LF,与 `.gitattributes` 的
+  约定不符(`scaffold_source.py --apply` 按目标文件现有风格写回,归一后不会再漂)。
+
 ## [1.4.0] - 2026-10-26
 
 搜索广度:一次请求扇出多个数据源;并把"延迟契约"与"数据正确性"拆成两条判据。

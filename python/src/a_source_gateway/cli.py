@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import CN_INVENTORY_CSV, load_config
+from .config import CN_INVENTORY_CSV, INVENTORY_CSV, load_config
 from .registry import (
     CN_EXTRA_COLUMNS,
     CN_PRIORITY_VALUES,
@@ -166,9 +166,39 @@ def _check_rows(header: list[str] | None, rows: list[dict[str, Any]], label: str
     return problems
 
 
+def _check_csv_line_endings(cfg) -> list[str]:
+    """data/*.csv 用 CRLF —— 这是契约, 不是格式偏好。
+
+    `.gitattributes` 把 `data/*.csv` 标成 `-text`(二进制), 就是为了让 git 不去
+    规范化行尾:`scaffold_source.py --apply` 承诺"老行一个字节都没动(含 CRLF 与
+    引号)", 测试也按 CRLF 断言。
+
+    行尾被某个工具悄悄改成 LF 时, 整个文件会变成一份**整文件**的 diff
+    (108 行全删全增), 混在真实改动里几乎看不出来 —— 本轮它已经这样发生了两次,
+    每次都要靠人眼发现。这里把它变成一条明确的报错。
+    """
+    problems: list[str] = []
+    for name in (INVENTORY_CSV, CN_INVENTORY_CSV):
+        try:
+            raw = cfg.find_data(name).read_bytes()
+        except (OSError, RuntimeError) as exc:
+            problems.append(f"{name}: 读不到 -> {exc}")
+            continue
+        # 去掉所有 CRLF 之后还剩 \n, 说明有"裸 LF"(整文件 LF 或 CRLF/LF 混用)
+        if b"\n" in raw.replace(b"\r\n", b""):
+            problems.append(
+                f"{name}: 行尾不是纯 CRLF(有裸 LF) —— data/*.csv 的 CRLF 是契约"
+                f"(见 .gitattributes 的 -text 标注);"
+                f"整文件行尾翻转会让 diff 变成 {raw.count(10)} 行的假改动")
+    return problems
+
+
 def cmd_validate(args) -> int:
     cfg = load_config()
     problems: list[str] = []
+
+    # 0) 行尾契约(CRLF): 早于一切内容检查 —— 行尾错了, 后面的 diff 都不可信
+    problems.extend(_check_csv_line_endings(cfg))
 
     # 1) 两份清单的列契约(规则 3.1:海外运行时清单 + 国内清单)
     rows = load_inventory(cfg)

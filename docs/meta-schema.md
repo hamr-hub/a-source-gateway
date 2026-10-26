@@ -56,7 +56,7 @@
 | `read_error` | **连上了但中途断了**:连接重置 / 服务端提前关闭 / EOF | 稍后重试(后台在补数) |
 | `upstream_error` | 上游返回 4xx/5xx,**或**其余传输层失败 | 看 `errors[].message` 里的上游原文/异常文本 |
 | `upstream_not_json` | 上游返回的不是 JSON(常见于上游错误页/WAF 拦截页) | 看 `errors[].message` 里的正文片段;或直连 `fallback.upstream_url` 看真实情况 |
-| `parse_error` | 正文不是声明的形状(CSV/JSONL 等) | 同上,直连上游看原文(目前只有 Go 网关会产生这一条;Python 参照面解析不了正文时报 `upstream_not_json`) |
+| `parse_error` | 正文不是端点声明的形状(csv/tsv 上游给了 XML/HTML 错误页、jsonl 一行都解析不成功等) | 同上,直连上游看原文;`message` 形如 `上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: …` |
 | `response_too_large` | 响应超正文上限被截断 | 减小 `limit`,或直连上游 / 走批量下载 |
 | `stale` | 缓存已过期,返回陈旧值 | 视场景接受,或稍后重试 |
 | `offline` | 网关离线模式 | 只用元数据与已缓存数据 |

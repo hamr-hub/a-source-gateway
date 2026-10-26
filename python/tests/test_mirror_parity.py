@@ -15,6 +15,11 @@ IndexError bug —— 同一份模板, Go 侧正常, Python 侧直接崩。
   2. 两边结果等于文档化的期望值(语义检测)—— 只有第 2 条才抓得住"两边一起错"。
 
 第 2 条的期望值按 Go 网关的语义手写(不是从实现里抄的), 所以语义被改坏时这里会红。
+
+解析侧还有第三份副本: parser_worker.py(Go 网关把解析外包给 Python 时走它)。
+"形状不匹配"(csv/tsv/jsonl 拿到 XML/HTML 错误页)在三份实现里都必须给出**同一个结论** ——
+少改一份就会出现"同一份正文,三个地方不同结论"这种最难查的问题, 所以下面最后一节
+把三份实现喂同一批正文, 逐条比对。
 """
 from __future__ import annotations
 
@@ -27,7 +32,11 @@ from typing import Any
 import pytest
 
 from a_source_gateway.config import load_config
-from a_source_gateway.resolver import Resolver
+from a_source_gateway.parser_worker import NotShapeError as WorkerNotShapeError
+from a_source_gateway.parser_worker import body_preview as worker_body_preview
+from a_source_gateway.parser_worker import parse_body as worker_parse_body
+from a_source_gateway.resolver import Resolver, UpstreamNotShapeError
+from a_source_gateway.resolver import body_preview as resolver_body_preview
 from a_source_gateway.schema import QueryRequest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -251,3 +260,107 @@ def test_resolver_and_mirror_project_identically(case: dict[str, Any], mirror: M
         f"参照实现与镜像漂移了: resolver={projected_resolver!r} mirror={projected_mirror!r}")
     assert projected_resolver == case["expected"], (
         f"投影结果不符合 Go 网关语义: {projected_resolver!r} != {case['expected']!r}")
+
+
+# ── 形状不匹配: 三份解析实现必须给出同一个结论 ──────────────────────────
+# 三份实现: 参照面(resolver) / parser worker(Go 网关的解析外包路径) /
+# stdlib 镜像(scripts/_asg_mirror.py)。同一份正文, 三处必须同进同退。
+#
+# 命中 = 上游给的正文不是端点声明的形状(csv/tsv 拿到 XML/HTML 错误页,
+# jsonl 整批行都解析不出来)。命中时三处都要报错, 未命中时三处都要给出同样的数据。
+SHAPE_CASES: list[dict[str, Any]] = [
+    {"name": "csv 拿到 HTML 错误页", "shape": "csv",
+     "body": "<!DOCTYPE html>\n<html><body>503</body></html>", "mismatch": True},
+    {"name": "csv 拿到 XML 错误页", "shape": "csv",
+     "body": "<?xml version='1.0'?><error/>", "mismatch": True},
+    {"name": "csv 拿到泛 XML", "shape": "csv",
+     "body": "<root><a>1</a></root>", "mismatch": True},
+    {"name": "csv 拿到小写 html", "shape": "csv",
+     "body": "<html></html>", "mismatch": True},
+    {"name": "csv 拿到带 BOM 的 HTML", "shape": "csv",
+     "body": "﻿<!DOCTYPE html><html></html>", "mismatch": True},
+    {"name": "csv 拿到闭合标签在扫描窗口内", "shape": "csv",
+     "body": "<" + "x" * 100 + "</a>", "mismatch": True},
+    {"name": "csv 的闭合标签在扫描窗口外(不命中)", "shape": "csv",
+     "body": "<" + "x" * 600 + "</a>", "mismatch": False},
+    {"name": "csv 正常表格", "shape": "csv", "body": "a,b\n1,2\n", "mismatch": False},
+    {"name": "csv 的字段以 < 开头(不命中)", "shape": "csv",
+     "body": "name,value\n<unknown>,1\n", "mismatch": False},
+    {"name": "csv 空正文(不命中)", "shape": "csv", "body": "", "mismatch": False},
+    {"name": "csv 空白正文(不命中)", "shape": "csv", "body": "   \n  \n", "mismatch": False},
+    {"name": "tsv 拿到 HTML 错误页", "shape": "tsv",
+     "body": "<!DOCTYPE html>\n<html></html>", "mismatch": True},
+    {"name": "tsv 正常表格", "shape": "tsv", "body": "a\tb\n1\t2\n", "mismatch": False},
+    {"name": "jsonl 拿到 HTML 错误页", "shape": "jsonl",
+     "body": "<!DOCTYPE html>\n<html></html>", "mismatch": True},
+    {"name": "jsonl 整批行都坏", "shape": "jsonl",
+     "body": "not json\nalso not json\n", "mismatch": True},
+    {"name": "jsonl 部分行坏(不命中)", "shape": "jsonl",
+     "body": '{"a":1}\nnope\n{"a":2}\n', "mismatch": False},
+    {"name": "jsonl 全部行正常", "shape": "jsonl",
+     "body": '{"a":1}\n{"a":2}\n', "mismatch": False},
+    {"name": "jsonl 空正文(不命中)", "shape": "jsonl", "body": "", "mismatch": False},
+    {"name": "jsonl 只有空行(不命中)", "shape": "jsonl",
+     "body": "\n\n  \n", "mismatch": False},
+]
+
+# 固定文案(手写, 不从实现里抄): 两个平面给调用方看的话必须是同一句
+SHAPE_FIXED_WORDING = {
+    "csv": "上游返回的不是 CSV(疑似 XML/HTML 错误页)",
+    "tsv": "上游返回的不是 TSV(疑似 XML/HTML 错误页)",
+    "jsonl": "上游返回的不是 JSONL(疑似 HTML 错误页)",
+}
+
+
+def _shape_conclusions(body: str, shape: str, mirror: ModuleType
+                       ) -> dict[str, tuple[bool, Any]]:
+    """三份实现对同一份正文给出的结论: {实现名: (是否命中, 文案或数据)}。"""
+    resolver = _resolver()
+    out: dict[str, tuple[bool, Any]] = {}
+    try:
+        out["resolver"] = (False, resolver._parse(body, shape, strict=True))
+    except UpstreamNotShapeError as exc:
+        out["resolver"] = (True, str(exc))
+    try:
+        out["mirror"] = (False, mirror.parse_body(body, shape, strict=True))
+    except mirror.NotShapeError as exc:
+        out["mirror"] = (True, str(exc))
+    try:
+        out["worker"] = (False, worker_parse_body(body, shape))
+    except WorkerNotShapeError as exc:
+        out["worker"] = (True, str(exc))
+    return out
+
+
+@pytest.mark.parametrize("case", SHAPE_CASES, ids=[c["name"] for c in SHAPE_CASES])
+def test_three_parsers_agree_on_shape_mismatch(case: dict[str, Any], mirror: ModuleType) -> None:
+    """同一份正文, 三份实现必须同进同退 —— 少改一份就会出现最难查的那类问题。"""
+    shape = case["shape"]
+    body = case["body"]
+    results = _shape_conclusions(body, shape, mirror)
+
+    for impl, (hit, _) in results.items():
+        assert hit is case["mismatch"], (
+            f"{impl} 的结论与文档化口径不符: 命中={hit}, 期望={case['mismatch']} "
+            f"(shape={shape}, body={body[:60]!r})")
+
+    if not case["mismatch"]:
+        # 不命中时三处给的数据也要一样
+        values = [value for _, value in results.values()]
+        assert values[0] == values[1] == values[2], f"三份实现给出的数据不一致: {results}"
+        return
+
+    # 命中时三处的文案逐字相同(各自的正文片段算法给出同样的片段时)
+    previews = {
+        "resolver": resolver_body_preview(body),
+        "mirror": mirror.body_preview(body),
+        "worker": worker_body_preview(body),
+    }
+    for impl, (_hit, message) in results.items():
+        expected = SHAPE_FIXED_WORDING[shape]
+        if previews[impl]:
+            expected += "; 正文片段: " + previews[impl]
+        assert message == expected, f"{impl} 的文案不对: {message!r} != {expected!r}"
+    if len(set(previews.values())) == 1:
+        messages = {message for _, message in results.values()}
+        assert len(messages) == 1, f"三份实现的文案不一致: {results}"

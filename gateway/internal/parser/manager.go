@@ -22,7 +22,8 @@ import (
 //
 // A worker that answers correctly is not a failure: a body that is not JSON
 // (an HTML error page of an upstream for example) comes back as the
-// ErrNotJSON error and does not switch the engine over.
+// ErrNotJSON error, a body that is not the declared shape comes back as
+// ErrNotShape, and neither of them switches the engine over.
 type Manager struct {
 	mode     string
 	logger   *log.Logger
@@ -84,10 +85,21 @@ func (m *Manager) Parse(ctx context.Context, shape, mediaType string, body []byt
 	if active.Name() == "go" {
 		return nil, err
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, ErrNotJSON) {
+	// The worker reports a body that is not the declared shape (an HTML
+	// error page instead of CSV/TSV/JSON Lines) with its own error type
+	// name. The wording of that answer is a contract between the two
+	// planes, so the shape is taken from the wording: the worker answered
+	// correctly, it did not break.
+	if !errors.Is(err, ErrNotShape) {
+		if shape, snippet, ok := parseShapeMismatch(err.Error()); ok {
+			err = NewNotShapeError(shape, snippet, err)
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, ErrNotJSON) || errors.Is(err, ErrNotShape) {
 		// The request ran out of time, or the upstream answered something
-		// that is not JSON (an HTML error page for example): neither is the
-		// worker's fault, the worker answered correctly.
+		// that is not the declared shape (an HTML error page for example):
+		// neither is the worker's fault, the worker answered correctly.
 		//
 		// The Python plane stays active. A Go fallback would not have any
 		// time left either when the deadline is gone, and an error page of

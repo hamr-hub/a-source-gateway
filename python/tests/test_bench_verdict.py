@@ -94,3 +94,38 @@ def test_verdict_strings_are_distinct():
     assert _verdict(False, False, ["a"], 1).startswith("FAIL")
     assert "仅延迟契约" in _verdict(True, False, ["a"], 1)
     assert _verdict(True, True, [], 1).startswith("PASS")
+
+
+def _search_case(name: str, p95: float, with_data: int) -> dict[str, Any]:
+    """搜索用例的 count 是聚合口径: 有几个源拿到了数据。"""
+    return {"kind": "search", "name": name, "status": 200, "p50": p95, "p95": p95,
+            "max": p95, "n": 3, "degraded": 0, "cached": 0,
+            "count": with_data, "total": None}
+
+
+def test_search_case_without_data_counts_as_missing():
+    """搜索用例一个源都没拿到数据, 同样要算进"没有数据"的名单里。"""
+    results = [_case("a", 5.0, count=2, degraded=False),
+               _search_case("search/交易所", 12.0, with_data=0)]
+    s = build_summary(results, [], rounds=3)
+    assert s["data_total"] == 2
+    assert s["data_missing"] == ["search/交易所"]
+    assert s["data_ok"] is False
+    assert s["search_total"] == 1
+    assert s["search_with_count"] == 0
+
+
+def test_search_case_with_data_is_counted():
+    results = [_search_case("search/交易所", 12.0, with_data=3)]
+    s = build_summary(results, [], rounds=3)
+    assert s["data_ok"] is True
+    assert s["search_with_count"] == 1
+    assert s["data_total"] == 1
+
+
+def test_search_case_over_budget_fails_the_latency_criterion():
+    """搜索的墙钟由最慢的源决定 —— 它超预算就是真超预算。"""
+    results = [_search_case("search/交易所", BUDGET_MS + 1.0, with_data=3)]
+    s = build_summary(results, [], rounds=3)
+    assert s["pass"] is False
+    assert s["over_budget_cases"] == ["search/交易所"]

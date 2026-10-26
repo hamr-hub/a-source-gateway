@@ -303,7 +303,7 @@
           <thead><tr><th>场景</th><th>表现</th></tr></thead>
           <tbody>
             <tr><td>上游慢于预算</td><td><code>timeout</code> + <code>fallback.upstream_url</code>，后台同时补数</td></tr>
-            <tr><td>上游返回了但解析不了</td><td><code>parse_error</code>，提示直连上游</td></tr>
+            <tr><td>上游返回了但解析不了</td><td><code>parse_error</code>，提示直连上游（非 JSON 形状的 csv/tsv/jsonl 端点拿到 HTML 错误页也走这条）</td></tr>
             <tr><td>上游返回 ≥400</td><td><code>upstream_error</code>（带 <code>status</code>），<code>data</code> 仍可能是空</td></tr>
             <tr><td>响应体过大 / 端点是文件型大响应</td><td><code>response_too_large</code>，提示减小 <code>limit</code> 或直连</td></tr>
             <tr><td>端点要联系邮箱但没配 <code>A_GATEWAY_CONTACT</code></td><td><code>contact_required</code>，给出配置提示</td></tr>
@@ -483,7 +483,7 @@ X-Gateway-Trace-Id: ac9f72d36d8df3283905a136c399b306
             <tr><td><code>budget_exceeded</code></td><td>客户端可见耗时超过本次预算</td><td><span class="badge ok">200</span></td><td>客户端可见耗时 520ms 超过预算 500ms</td></tr>
             <tr><td><code>upstream_error</code></td><td>上游返回 ≥400 的状态码（带 <code>status</code>），或其余传输层故障</td><td><span class="badge ok">200</span></td><td>上游响应体前 300 字符 / 原始异常文本</td></tr>
             <tr><td><code>upstream_not_json</code></td><td>上游返回的不是 JSON（常见于上游错误页 / WAF 拦截页）</td><td><span class="badge ok">200</span></td><td>上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: &lt;!DOCTYPE html&gt;…</td></tr>
-            <tr><td><code>parse_error</code></td><td>上游返回了，但按端点定义解析不出来（目前只有 Go 网关会产生；Python 参照面解析不了正文时报 <code>upstream_not_json</code>）</td><td><span class="badge ok">200</span></td><td>解析器报错信息（截到 300 字符）</td></tr>
+            <tr><td><code>parse_error</code></td><td>上游返回了，但按端点定义解析不出来：csv/tsv 拿到的是 XML/HTML 错误页、jsonl 一行都解析不成功（非 JSON 形状的错误页不再被当成数据行）</td><td><span class="badge ok">200</span></td><td>上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: …</td></tr>
             <tr><td><code>response_too_large</code></td><td>响应体超过上限被截断，或端点是文件型大响应</td><td><span class="badge ok">200</span></td><td>响应超过 1MB 上限被截断;请减小 limit 或直连上游</td></tr>
             <tr><td><code>missing_param</code></td><td>缺端点要求的必填参数</td><td><span class="badge ok">200</span></td><td>缺少必填参数 cik</td></tr>
             <tr><td><code>endpoint_not_found</code></td><td>该源没有这个端点 id</td><td><span class="badge ok">200</span></td><td>gleif_lei 没有端点 xxx</td></tr>

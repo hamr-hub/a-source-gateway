@@ -26,6 +26,16 @@ Go 网关把上游原始响应丢给本 worker, 本 worker 把它解析成规范
     {"id":"req-1","ok":false,"error":"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: <正文前若干字符>",
      "error_type":"NotJSON","body_preview":"<正文前若干字符>"}
 
+上游正文不是端点声明的形状时(**只针对 csv/tsv/jsonl 形状**):
+    {"id":"req-1","ok":false,"error":"上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: <正文前若干字符>",
+     "error_type":"NotShape","body_preview":"<正文前若干字符>"}
+
+error_type 的取值与语义:
+    NotJSON   —— 正文不是 JSON(json 形状解析失败)
+    NotShape  —— 正文不是声明的形状(csv/tsv 拿到标记语言, jsonl 整批行都解析不了)
+    ParseError —— 其它解析异常(与 NotShape 区分开: 那是"形状对但内容坏了")
+    DecodeError / BadRequest —— 请求本身有问题
+
 其他 op:
     {"id":"x","op":"ping"}      -> {"id":"x","ok":true,"version":"1.0","python":"3.12.10"}
     {"id":"x","op":"shutdown"}  -> {"id":"x","ok":true}(然后干净退出)
@@ -102,7 +112,12 @@ class NotJSONError(Exception):
     """
 
     def __init__(self, preview: str):
-        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: {preview}")
+        # 空正文不追加 "; 正文片段: " 后缀 —— 与 Go 侧 NotJSONError 的行为
+        # 逐字一致(Go 侧在片段为空时省略后缀)。
+        msg = "上游返回的不是 JSON(疑似 HTML 错误页)"
+        if preview:
+            msg += "; 正文片段: " + preview
+        super().__init__(msg)
         self.preview = preview
 
 
@@ -118,6 +133,79 @@ def body_preview(body: str, limit: int = NOT_JSON_PREVIEW_CHARS) -> str:
     return flat
 
 
+# ── 形状不匹配(csv/tsv/jsonl 拿到的是 XML/HTML 错误页) ─────────────────
+# 下面这几个常量与判定函数在 resolver.py / scripts/_asg_mirror.py 里逐字重复:
+# 三份解析实现必须给出同一个结论, 少改一份就会出现"同一份正文,三个地方不同结论"。
+# 判定口径见 docs/meta-schema.md 的 parse_error。
+MARKUP_PREFIXES = ("<!doctype", "<html", "<?xml")   # 标记语言的开头特征(小写比较)
+MARKUP_SCAN_BYTES = 512        # "正文前 N 字节内出现 </" —— 闭合标签标记的扫描窗口
+
+# 形状 -> (正文里说的形状名, 疑似是什么错误页); 文案与 Go 侧逐字相同
+SHAPE_MISMATCH_TEXT: dict[str, tuple[str, str]] = {
+    "csv": ("CSV", "XML/HTML 错误页"),
+    "tsv": ("TSV", "XML/HTML 错误页"),
+    "jsonl": ("JSONL", "HTML 错误页"),
+}
+
+
+def strip_bom_and_space(body: str) -> str:
+    """去掉 UTF-8 BOM 与首尾空白(判定标记语言前先归一化)。"""
+    s = body.strip()
+    if s.startswith("\ufeff"):
+        s = s[1:].strip()
+    return s
+
+
+def looks_like_markup(body: str) -> bool:
+    """正文是不是标记语言(XML/HTML)—— csv/tsv 拿到这种正文就不是表格。
+
+    命中条件(满足任一):
+      - 归一化后以 <!doctype / <html / <?xml 开头(大小写不敏感);
+      - 归一化后以 < 开头, 且正文前 512 字节内出现 "</"。
+
+    最后一条刻意保守: 合法 CSV 的字段可能以 < 开头(如 <unknown>),
+    但单个 <unknown> 不会带来闭合标签标记 "</", 所以不会误伤。
+    """
+    s = strip_bom_and_space(body)
+    if not s:
+        return False
+    if s.lower().startswith(MARKUP_PREFIXES):
+        return True
+    if s.startswith("<"):
+        return b"</" in s.encode("utf-8")[:MARKUP_SCAN_BYTES]
+    return False
+
+
+def shape_mismatch_message(shape: str, preview: str) -> str:
+    """形状不匹配的报错文案(两个平面逐字相同)。
+
+    正文为空时不带 "; 正文片段: " 后缀 —— 与 Go 侧 NotJSONError 的行为一致。
+    """
+    label, suspect = SHAPE_MISMATCH_TEXT.get(shape, (shape.upper(), "XML/HTML 错误页"))
+    msg = f"上游返回的不是 {label}(疑似 {suspect})"
+    if preview:
+        msg += f"; 正文片段: {preview}"
+    return msg
+
+
+class NotShapeError(NotJSONError):
+    """上游正文不是端点声明的形状(csv/tsv/jsonl 却拿到 XML/HTML 错误页)。
+
+    以前这里静默兜底: csv/tsv 把错误页当**数据行**返回, jsonl 跳过坏行得到空列表 ——
+    调用方(Go 网关)看到的是一次"成功": 分不清"确实没有数据"和"上游给了错误页"。
+    现在通过既有的 NDJSON 错误通道回传, error_type = "NotShape"。
+
+    继承 NotJSONError: 两者同属"上游给的不是声明的那种正文", 捕获方
+    (handle_request)按"先具体后一般"的顺序分别处理。
+    """
+
+    def __init__(self, shape: str, preview: str):
+        # 不用父类的 __init__: 它的文案是"不是 JSON", 这里要说的是"不是声明的形状"。
+        Exception.__init__(self, shape_mismatch_message(shape, preview))
+        self.shape = shape
+        self.preview = preview
+
+
 def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
     """把上游原始正文解析成中间结构。
 
@@ -129,8 +217,16 @@ def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
       其它     -> json.loads; 失败抛 NotJSONError(**不再静默兜底成 _text**)
 
     xml/text 形状的 _xml/_text 兜底是**约定语义**(不是错误), 保持不变。
+
+    形状不匹配(csv/tsv 拿到 XML/HTML 错误页、jsonl 整批行都解析不了)抛
+    NotShapeError: 以前是静默兜底 —— csv/tsv 把错误页当数据行返回, jsonl 给出
+    空列表, 调用方看到的是一次"成功", 分不清"确实没有数据"和"上游给了错误页"。
+
+    worker 路径没有 strict 开关: 它服务的是 Go 网关的解析路径, 判定**始终生效**。
     """
     if shape in ("csv", "tsv"):
+        if looks_like_markup(body):
+            raise NotShapeError(shape, body_preview(body))
         delim = "\t" if shape == "tsv" else ","
         rows: list[list[str]] = []
         try:
@@ -143,16 +239,21 @@ def parse_body(body: str, shape: str, max_rows: int = DEFAULT_MAX_ROWS) -> Any:
         return rows
     if shape == "jsonl":
         out: list[Any] = []
+        seen = 0                       # 非空行数(用来区分"没有数据"和"全军覆没")
         for line in body.splitlines():
             line = line.strip()
             if not line:
                 continue
+            seen += 1
             try:
                 out.append(json.loads(line))
             except ValueError:           # 坏行跳过, 不影响其余行
                 continue
             if len(out) >= max_rows:
                 break
+        if seen and not out:
+            # 有内容却一行都解析不出来 -> 这不是 JSONL, 是上游的 HTML 错误页
+            raise NotShapeError("jsonl", body_preview(body))
         return out
     if shape == "xml":
         return {"_xml": body[:JSON_LIMIT_BYTES]}
@@ -332,6 +433,13 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
             payload, item_path=item_path, total_field=total_field,
             item_shape=item_shape, limit=limit, fields=fields,
             item_flatten=item_flatten)
+    except NotShapeError as e:
+        # 上游正文不是声明的形状(csv/tsv 拿到 XML/HTML 错误页, jsonl 整批行都坏):
+        # 走既有的 NDJSON 错误通道, 让 Go 网关能把它标成 parse_error 降级,
+        # 而不是"成功 + 一堆垃圾行"或"成功 + 0 条"。
+        _log(f"上游正文不是声明的形状({e.shape}): {e.preview[:80]}")
+        return {"id": rid, "ok": False, "error": str(e),
+                "error_type": "NotShape", "body_preview": e.preview}
     except NotJSONError as e:
         # 上游正文不是 JSON: 走既有的 NDJSON 错误通道, 让 Go 网关能区分
         # "上游给了 HTML 错误页"与"确实没有数据"。

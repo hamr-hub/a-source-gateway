@@ -183,3 +183,40 @@ def test_same_source_in_both_inventories_is_rejected(data_copy: Path):
     r = _run_validate(data_copy)
     assert r.returncode == 1
     assert "同时出现" in r.stdout
+
+
+# ── 护栏:行尾契约(CRLF) ─────────────────────────────────────────────────
+# `.gitattributes` 把 data/*.csv 标成 -text(binary), 就是要 git 不去规范化行尾:
+# scaffold_source.py --apply 承诺"老行一个字节都没动(含 CRLF 与引号)"。
+# 行尾被某个工具悄悄改成 LF 时, 整份清单会变成一份 108 行的假 diff,
+# 混在真实改动里几乎看不出来 —— 本轮它已经这样发生过两次。
+def test_real_inventories_use_crlf():
+    for name in ("source_inventory.csv", "source_inventory_cn.csv"):
+        raw = (DATA_DIR / name).read_bytes()
+        assert b"\r\n" in raw, f"{name} 应该是 CRLF"
+        assert b"\n" not in raw.replace(b"\r\n", b""), f"{name} 里混进了裸 LF"
+
+
+def test_line_endings_normalized_to_lf_is_rejected(data_copy: Path):
+    p = data_copy / "source_inventory.csv"
+    p.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))
+    r = _run_validate(data_copy)
+    assert r.returncode == 1, f"行尾被改成 LF 却校验通过:\n{r.stdout}\n{r.stderr}"
+    assert "CRLF" in r.stdout, r.stdout
+
+
+def test_mixed_line_endings_are_rejected(data_copy: Path):
+    p = data_copy / "source_inventory_cn.csv"
+    raw = p.read_bytes()
+    p.write_bytes(raw.replace(b"\r\n", b"\n", 1))   # 只改第一行 → 混用
+    r = _run_validate(data_copy)
+    assert r.returncode == 1, f"行尾混用却校验通过:\n{r.stdout}\n{r.stderr}"
+    assert "CRLF" in r.stdout, r.stdout
+
+
+def test_cn_inventory_line_ending_is_also_guarded(data_copy: Path):
+    p = data_copy / "source_inventory_cn.csv"
+    p.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))
+    r = _run_validate(data_copy)
+    assert r.returncode == 1
+    assert "source_inventory_cn.csv" in r.stdout

@@ -74,6 +74,19 @@ META_CASES: list[tuple[str, str]] = [
     ("GET /v1/stats", "/v1/stats"),
 ]
 
+# 搜索用例: POST /v1/search 的关键词扇出。
+#
+# 搜索的墙钟由**最慢的那一个源**决定(各源并发、各自一份预算),所以它的延迟
+# 天然与单源查询同一量级; 把它单列出来, 是为了让这个接口的延迟也有基线可盯 ——
+# 新接口没有基线, 就等于没有人看着它变慢。
+#
+# 关键词只用**国内**的源: 跨境源在本机直连普遍超时, 会把整条用例的 p95 变成
+# "网络有多慢", 而不是"网关有多慢"(与 CONTACT_REQUIRED 跳过 SEC 同理)。
+SEARCH_CASES: list[tuple[str, dict[str, Any]]] = [
+    ("search/交易所", {"q": "交易所", "max_sources": 6, "limit": 3}),
+    ("search/证券监管", {"q": "证券监管", "max_sources": 6, "limit": 3}),
+]
+
 
 def _pct(values: list[float], p: float) -> float:
     if not values:
@@ -140,6 +153,11 @@ async def bench(base: str, rounds: int, out_path: Path, cold_rounds: int = 2,
         for body in (b for _n, b in cases):
             await run_case(client, "POST", "/v1/query", body)
 
+        # 搜索用例也预热一次: 它扇出的源与单源用例可能重合, 预热让热路径
+        # 真的落在缓存上(否则测的是"每个源的首调", 与冷路径那一组重复了)。
+        for _name, body in SEARCH_CASES:
+            await run_case(client, "POST", "/v1/search", body)
+
         # 逐个等"缓存真的热了": 轮询到有数据或超过等待上限。
         # 只等 pending==0 会有竞态: 预热任务可能在预热请求返回后才被登记。
         wait_deadline = time.time() + 90
@@ -196,6 +214,24 @@ async def bench(base: str, rounds: int, out_path: Path, cold_rounds: int = 2,
                             "degraded": degraded, "cached": cached,
                             "count": max(counts), "total": totals[-1]})
 
+        # ── 搜索用例: 扇出的墙钟由最慢的那一个源决定 ──────────────────────
+        for _name, body in SEARCH_CASES:
+            lat, degraded = [], 0
+            counts = []
+            for _ in range(rounds):
+                st, ms, payload = await run_case(client, "POST", "/v1/search", body)
+                lat.append(ms)
+                m = payload.get("meta", {})
+                degraded += 1 if m.get("degraded") else 0
+                # 搜索的"取到几条"是聚合口径: 有几个源拿到了数据。
+                counts.append(m.get("with_data") or 0)
+            results.append({"kind": "search", "name": _name, "status": st,
+                            "p50": round(statistics.median(lat), 1),
+                            "p95": round(_pct(lat, 95), 1),
+                            "max": round(max(lat), 1), "n": len(lat),
+                            "degraded": degraded, "cached": 0,
+                            "count": max(counts), "total": None})
+
     summary = build_summary(results, cold, rounds)
     out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
@@ -227,8 +263,12 @@ def build_summary(results: list[dict[str, Any]], cold: list[dict[str, Any]],
     # 这一条**不并进 pass**: 能不能拿到数据取决于上游限流与跨境网络, 不是网关
     # 可控的范围。但它必须是一个独立字段 —— 否则"10 个用例全部降级、count 全 0"
     # 也会打印一句 "PASS", 把最该被看到的信号盖过去。
+    #
+    # 搜索用例的 count 是聚合口径: 有几个源拿到了数据(with_data)。
     q_cases = [r for r in results if r["kind"] == "query"]
-    data_missing = [r["name"] for r in q_cases if (r.get("count") or 0) <= 0]
+    s_cases = [r for r in results if r["kind"] == "search"]
+    data_missing = ([r["name"] for r in q_cases if (r.get("count") or 0) <= 0]
+                    + [r["name"] for r in s_cases if (r.get("count") or 0) <= 0])
     data_ok = not data_missing
 
     return {
@@ -253,10 +293,13 @@ def build_summary(results: list[dict[str, Any]], cold: list[dict[str, Any]],
         "pass": latency_ok,
         "latency_ok": latency_ok,
         "data_ok": data_ok,
-        "data_with_count": len(q_cases) - len(data_missing),
-        "data_total": len(q_cases),
+        "data_with_count": len(q_cases) + len(s_cases) - len(data_missing),
+        "data_total": len(q_cases) + len(s_cases),
+        "search_total": len(s_cases),
+        "search_with_count": sum(1 for r in s_cases if (r.get("count") or 0) > 0),
         "data_missing": data_missing,
-        "verdict": _verdict(latency_ok, data_ok, data_missing, len(q_cases)),
+        "verdict": _verdict(latency_ok, data_ok, data_missing,
+                            len(q_cases) + len(s_cases)),
         "cases": results,
     }
 
@@ -284,6 +327,10 @@ def print_summary(summary: dict[str, Any]) -> None:
     qc = [r for r in summary["cases"] if r["kind"] == "query"]
     with_data = sum(1 for r in qc if (r.get("count") or 0) > 0)
     print(f"热路径有数据用例: {with_data}/{len(qc)}")
+    sc = [r for r in summary["cases"] if r["kind"] == "search"]
+    if sc:
+        s_with = sum(1 for r in sc if (r.get("count") or 0) > 0)
+        print(f"搜索用例有数据的源: {s_with}/{len(sc)}(扇出墙钟由最慢的源决定)")
     missing = summary.get("data_missing") or []
     if missing:
         print(f"没有数据的用例: {', '.join(missing)}")

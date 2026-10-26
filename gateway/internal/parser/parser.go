@@ -12,6 +12,7 @@
 package parser
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -80,6 +81,104 @@ func NewNotJSONError(snippet string, cause error) error {
 	return &NotJSONError{Snippet: snippet, Cause: cause}
 }
 
+// ErrNotShape reports that an upstream body does not have the shape the
+// endpoint declares (CSV / TSV / JSON Lines).
+//
+// It is the sibling of ErrNotJSON: an upstream that answers with an HTML
+// error page instead of the declared format is not an empty result. The
+// caller has to be able to tell the two apart, so the error is detectable
+// with errors.Is.
+//
+// The wording is the same on both planes (Go engine, Python worker) and in
+// the Python reference: the envelope of a call must not depend on which
+// engine produced it.
+var ErrNotShape = errors.New("上游返回的不是声明的形状")
+
+// shapeMismatchPrefixes holds the wording of the shape mismatch, one entry
+// per shape. The three sentences are a contract with the Python plane: they
+// are written verbatim there too, and the manager recognises a worker answer
+// by them (see parseShapeMismatch).
+var shapeMismatchPrefixes = []struct {
+	shape  string
+	prefix string
+}{
+	{"csv", "上游返回的不是 CSV(疑似 XML/HTML 错误页)"},
+	{"tsv", "上游返回的不是 TSV(疑似 XML/HTML 错误页)"},
+	{"jsonl", "上游返回的不是 JSONL(疑似 HTML 错误页)"},
+}
+
+// NotShapeError is the concrete form of ErrNotShape: it carries the shape
+// the endpoint declared and an excerpt of the body, so that the reason is
+// visible at a glance ("<!DOCTYPE html>…").
+type NotShapeError struct {
+	// Shape is the declared shape of the endpoint ("csv", "tsv", "jsonl").
+	Shape string
+	// Snippet is a single line excerpt of the upstream body.
+	Snippet string
+	// Cause is the underlying reason. It is kept for the logs; it is not
+	// rendered into the message, because the excerpt says more than a
+	// decoder error does.
+	Cause error
+}
+
+// Error implements error.
+//
+// The message is one template per shape:
+//
+//	上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: <片段>
+//	上游返回的不是 TSV(疑似 XML/HTML 错误页); 正文片段: <片段>
+//	上游返回的不是 JSONL(疑似 HTML 错误页); 正文片段: <片段>
+//
+// An empty body adds no excerpt, exactly like NotJSONError does.
+func (e *NotShapeError) Error() string {
+	msg := notShapePrefix(e.Shape)
+	if e.Snippet != "" {
+		msg += "; 正文片段: " + e.Snippet
+	}
+	return msg
+}
+
+// Unwrap makes errors.Is(err, ErrNotShape) true.
+func (e *NotShapeError) Unwrap() error { return ErrNotShape }
+
+// NewNotShapeError builds a NotShapeError out of a body excerpt.
+func NewNotShapeError(shape, snippet string, cause error) error {
+	return &NotShapeError{Shape: shape, Snippet: snippet, Cause: cause}
+}
+
+// notShapePrefix returns the wording of a shape mismatch. An unknown shape
+// (there is none today) falls back to a generic sentence, so that the error
+// never renders an empty message.
+func notShapePrefix(shape string) string {
+	for _, p := range shapeMismatchPrefixes {
+		if p.shape == shape {
+			return p.prefix
+		}
+	}
+	return "上游返回的不是 " + strings.ToUpper(shape) + "(疑似 XML/HTML 错误页)"
+}
+
+// parseShapeMismatch splits a shape mismatch sentence back into its shape
+// and the excerpt of the body.
+//
+// The Python worker reports a shape mismatch with its own error type name,
+// which the two planes do not have to agree on. The wording, on the other
+// hand, is a contract: it is written verbatim on both sides. So the manager
+// recognises a worker answer by the wording, and turns it into the very same
+// error the Go engine produces.
+func parseShapeMismatch(msg string) (shape string, snippet string, ok bool) {
+	for _, p := range shapeMismatchPrefixes {
+		idx := strings.Index(msg, p.prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := msg[idx+len(p.prefix):]
+		rest = strings.TrimPrefix(rest, "; 正文片段: ")
+		return p.shape, notJSONSnippet([]byte(rest)), true
+	}
+	return "", "", false
+}
+
 // notJSONSnippet turns the head of an upstream body into a single line
 // excerpt: newlines are flattened and the length is capped, so that an HTML
 // error page stays readable inside one log line.
@@ -102,6 +201,57 @@ func notJSONSnippet(body []byte) string {
 		return string(rs[:NotJSONSnippetRunes]) + "…"
 	}
 	return flat
+}
+
+// markupProbeBytes is the window in which a closing tag marker ("</") turns
+// a body that starts with "<" into a markup document. It is wide enough for
+// the head of a real error page and narrow enough to stay clear of a long
+// CSV that happens to carry a "</" somewhere further down.
+const markupProbeBytes = 512
+
+// utf8BOM is the byte order mark some upstreams put in front of a document.
+var utf8BOM = []byte{0xef, 0xbb, 0xbf}
+
+// looksLikeMarkup reports whether the body looks like an XML/HTML document
+// instead of the declared CSV/TSV.
+//
+// An upstream that answers with an error page does not say so in the status
+// code: it answers 200 with a HTML page. Handing that page to the CSV reader
+// would turn the error page into "data rows", which is worse than no answer
+// at all. The test is deliberately narrow, so that a CSV field starting with
+// "<" is not mistaken for markup.
+func looksLikeMarkup(body []byte) bool {
+	head := stripBOMAndSpace(body)
+	if len(head) == 0 || head[0] != '<' {
+		return false
+	}
+	if hasPrefixFold(head, "<!doctype") || hasPrefixFold(head, "<html") || hasPrefixFold(head, "<?xml") {
+		return true
+	}
+	probe := head
+	if len(probe) > markupProbeBytes {
+		probe = probe[:markupProbeBytes]
+	}
+	return bytes.Contains(probe, []byte("</"))
+}
+
+// stripBOMAndSpace drops the byte order mark and the surrounding blanks.
+//
+// The order is the one of the Python plane (strip_bom_and_space): the blanks
+// first, then the BOM, then the blanks again. Both planes have to reach the
+// same conclusion for the same body.
+func stripBOMAndSpace(body []byte) []byte {
+	out := bytes.TrimSpace(body)
+	out = bytes.TrimPrefix(out, utf8BOM)
+	return bytes.TrimSpace(out)
+}
+
+// hasPrefixFold compares a prefix case insensitively (ASCII).
+func hasPrefixFold(b []byte, prefix string) bool {
+	if len(b) < len(prefix) {
+		return false
+	}
+	return strings.EqualFold(string(b[:len(prefix)]), prefix)
 }
 
 // Spec describes where the items live inside an upstream payload and how
@@ -204,6 +354,12 @@ func (g *GoEngine) Parse(ctx context.Context, shape, mediaType string, body []by
 // text shapes keep their pass through behaviour: there the body is not
 // supposed to be JSON at all.
 //
+// The same holds for the CSV/TSV/JSON Lines shapes: an upstream that answers
+// with an HTML error page is reported as ErrNotShape. Handing that page to
+// the CSV reader would turn the error page into "data rows", and dropping
+// every JSON Lines row would look like "the source has no data". The XML and
+// text shapes stay untouched: their contract is "here is the raw body".
+//
 // The context bounds the work: the decoding of a big document is not free
 // and must not push the call past its budget.
 func (g *GoEngine) parseBody(ctx context.Context, shape string, body []byte, maxRows int) (any, error) {
@@ -213,9 +369,9 @@ func (g *GoEngine) parseBody(ctx context.Context, shape string, body []byte, max
 		if shape == "tsv" {
 			delim = '\t'
 		}
-		return parseDelimited(ctx, string(body), delim, maxRows)
+		return parseDelimited(ctx, shape, body, delim, maxRows)
 	case "jsonl":
-		return parseJSONL(ctx, string(body))
+		return parseJSONL(ctx, shape, body)
 	case "xml":
 		return NewObjectWith("_xml", truncateBytes(body, JSONLimitBytes)), nil
 	case "text":
@@ -248,12 +404,20 @@ func truncateBytes(b []byte, limit int) string {
 	return string(b)
 }
 
-func parseDelimited(ctx context.Context, body string, delim rune, maxRows int) ([]any, error) {
+// parseDelimited parses a CSV/TSV body.
+//
+// A body that looks like an XML/HTML document is not a CSV/TSV: it is the
+// error page of an upstream that answered 200. Reporting it as such keeps
+// the error page out of the data.
+func parseDelimited(ctx context.Context, shape string, body []byte, delim rune, maxRows int) ([]any, error) {
 	if maxRows <= 0 {
 		maxRows = JSONLMaxRows
 	}
+	if looksLikeMarkup(body) {
+		return nil, NewNotShapeError(shape, notJSONSnippet(body), nil)
+	}
 	rows := []any{}
-	r := csv.NewReader(strings.NewReader(body))
+	r := csv.NewReader(bytes.NewReader(body))
 	r.Comma = delim
 	r.FieldsPerRecord = -1
 	r.LazyQuotes = true
@@ -276,17 +440,26 @@ func parseDelimited(ctx context.Context, body string, delim rune, maxRows int) (
 	return rows, nil
 }
 
-func parseJSONL(ctx context.Context, body string) ([]any, error) {
+// parseJSONL parses a JSON Lines body.
+//
+// A few broken lines are tolerated: they are skipped, the good lines are
+// kept. But when **no** line can be parsed while the body does hold lines,
+// the body is not JSON Lines at all (an HTML error page for example). That
+// is reported, because "no data" and "the upstream sent an error page" are
+// two different answers.
+func parseJSONL(ctx context.Context, shape string, body []byte) ([]any, error) {
 	out := []any{}
-	for _, line := range strings.Split(body, "\n") {
+	lines := 0
+	for _, line := range bytes.Split(body, []byte("\n")) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
 			continue
 		}
-		v, err := UnmarshalOrderedContext(ctx, []byte(line))
+		lines++
+		v, err := UnmarshalOrderedContext(ctx, line)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -297,6 +470,9 @@ func parseJSONL(ctx context.Context, body string) ([]any, error) {
 		if len(out) >= JSONLMaxRows {
 			break
 		}
+	}
+	if lines > 0 && len(out) == 0 {
+		return nil, NewNotShapeError(shape, notJSONSnippet(body), nil)
 	}
 	return out, nil
 }

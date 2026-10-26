@@ -92,7 +92,87 @@ class UpstreamNotJSONError(Exception):
     """
 
     def __init__(self, preview: str):
-        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: {preview}")
+        # 空正文不追加 "; 正文片段: " 后缀 —— 与 Go 侧 NotJSONError 的行为
+        # 逐字一致(Go 侧在片段为空时省略后缀)。
+        msg = "上游返回的不是 JSON(疑似 HTML 错误页)"
+        if preview:
+            msg += "; 正文片段: " + preview
+        super().__init__(msg)
+        self.preview = preview
+
+
+# ── 形状不匹配(csv/tsv/jsonl 拿到的是 XML/HTML 错误页) ─────────────────
+# 下面这几个常量与判定函数在 parser_worker.py / scripts/_asg_mirror.py 里
+# 逐字重复: 三份解析实现必须给出同一个结论, 少改一份就会出现"同一份正文,
+# 三个地方不同结论"这种最难查的问题。判定口径见 docs/meta-schema.md 的 parse_error。
+MARKUP_PREFIXES = ("<!doctype", "<html", "<?xml")   # 标记语言的开头特征(小写比较)
+MARKUP_SCAN_BYTES = 512        # "正文前 N 字节内出现 </" —— 闭合标签标记的扫描窗口
+
+# 形状 -> (正文里说的形状名, 疑似是什么错误页); 文案与 Go 侧逐字相同
+SHAPE_MISMATCH_TEXT: dict[str, tuple[str, str]] = {
+    "csv": ("CSV", "XML/HTML 错误页"),
+    "tsv": ("TSV", "XML/HTML 错误页"),
+    "jsonl": ("JSONL", "HTML 错误页"),
+}
+
+
+def strip_bom_and_space(body: str) -> str:
+    """去掉 UTF-8 BOM 与首尾空白(判定标记语言前先归一化)。"""
+    s = body.strip()
+    if s.startswith("\ufeff"):
+        s = s[1:].strip()
+    return s
+
+
+def looks_like_markup(body: str) -> bool:
+    """正文是不是标记语言(XML/HTML)—— csv/tsv 拿到这种正文就不是表格。
+
+    命中条件(满足任一):
+      - 归一化后以 <!doctype / <html / <?xml 开头(大小写不敏感);
+      - 归一化后以 < 开头, 且正文前 512 字节内出现 "</"。
+
+    最后一条刻意保守: 合法 CSV 的字段可能以 < 开头(如 <unknown>),
+    但单个 <unknown> 不会带来闭合标签标记 "</", 所以不会误伤。
+    """
+    s = strip_bom_and_space(body)
+    if not s:
+        return False
+    if s.lower().startswith(MARKUP_PREFIXES):
+        return True
+    if s.startswith("<"):
+        return b"</" in s.encode("utf-8")[:MARKUP_SCAN_BYTES]
+    return False
+
+
+def shape_mismatch_message(shape: str, preview: str) -> str:
+    """形状不匹配的报错文案(两个平面逐字相同)。
+
+    正文为空时不带 "; 正文片段: " 后缀 —— 与 Go 侧 NotJSONError 的行为一致。
+    """
+    label, suspect = SHAPE_MISMATCH_TEXT.get(shape, (shape.upper(), "XML/HTML 错误页"))
+    msg = f"上游返回的不是 {label}(疑似 {suspect})"
+    if preview:
+        msg += f"; 正文片段: {preview}"
+    return msg
+
+
+class UpstreamNotShapeError(UpstreamNotJSONError):
+    """上游正文不是端点声明的形状(csv/tsv/jsonl 却拿到 XML/HTML 错误页)。
+
+    csv/tsv 以前把错误页当**数据行**返回, jsonl 跳过坏行得到空列表 —— 调用方
+    看到的是一次"成功"(degraded=false, data=[] 或一堆垃圾行), 分不清"确实没有
+    数据"和"上游给了错误页"。
+
+    继承 UpstreamNotJSONError: 两者同属"上游给的不是声明的那种正文"; 查询路径里
+    它先于 UpstreamNotJSONError 被捕获(报 parse_error), 而 scripts/_asg_bootstrap.py
+    的 parse_body 只捕获 NotJSONError —— 形状不匹配也必须能被它接住, 否则
+    verify_source.py 会直接抛栈, 而不是报出一条断言。
+    """
+
+    def __init__(self, shape: str, preview: str):
+        # 不用父类的 __init__: 它的文案是"不是 JSON", 这里要说的是"不是声明的形状"。
+        Exception.__init__(self, shape_mismatch_message(shape, preview))
+        self.shape = shape
         self.preview = preview
 
 
@@ -450,6 +530,26 @@ class Resolver:
                 meta.degraded = True
                 meta.errors.append({"type": "upstream_error", "status": status,
                                     "message": body[:300]})
+        except UpstreamNotShapeError as e:
+            # 上游给的不是端点声明的形状(csv/tsv 拿到 XML/HTML 错误页, jsonl 整批行都坏):
+            # 如实标降级 + parse_error, 别装成"成功 + 0 条"或"成功 + 一堆垃圾行"。
+            # 注意: 这**不是**传输层失败(不能落到下面的通用分支去报 upstream_error)。
+            meta.degraded = True
+            status = meta.upstream.status or 0
+            if status >= 400:
+                # 状态码 >= 400: 状态码才是根因, 先报它(与 Go 侧顺序一致)
+                meta.errors.append({"type": "upstream_error", "status": status,
+                                    "message": body[:300]})
+            meta.errors.append({"type": "parse_error",
+                                "message": str(e)[:300]})
+            meta.fallback = {"upstream_url": url, "method": ep["method"],
+                             "hint": "上游返回的不是声明的形状(疑似错误页); "
+                                     "请直连上游确认, 或稍后重试"}
+            self._schedule_warm(ep_ctx, url, cache_key)
+            data, total, truncated = self._fallback(val, ep, req)
+            meta.cached = val is not None
+            meta.cache_age_s = age
+            meta.count = len(data) if isinstance(data, list) else 0
         except UpstreamNotJSONError as e:
             # 上游给了非 JSON 正文(多半是 HTML 错误页): 如实标降级, 别装成"成功 + 0 条"
             meta.degraded = True
@@ -810,8 +910,14 @@ class Resolver:
         静默兜底成 {"_text": 原文}) —— 查询路径用它把"上游给了 HTML 错误页"
         如实标成降级。默认 lenient, 供只需要拿到原始文本的调用方使用
         (scripts/ 侧的 verify/demo 就是这么用的)。
+
+        `strict=True` 时, csv/tsv 拿到 XML/HTML 错误页、jsonl 整批行都解析不出来,
+        也会抛 UpstreamNotShapeError —— 以前是静默兜底(csv/tsv 把错误页当数据行
+        返回, jsonl 给出空列表), 调用方看到的是一次"成功"。
         """
         if shape in ("csv", "tsv"):
+            if strict and looks_like_markup(body):
+                raise UpstreamNotShapeError(shape, body_preview(body))
             delim = "\t" if shape == "tsv" else ","
             rows = []
             for i, row in enumerate(csv.reader(io.StringIO(body), delimiter=delim)):
@@ -821,16 +927,21 @@ class Resolver:
             return rows
         if shape == "jsonl":            # JSON Lines: 每行一个对象
             out = []
+            seen = 0                   # 非空行数(用来区分"没有数据"和"全军覆没")
             for line in body.splitlines():
                 line = line.strip()
                 if not line:
                     continue
+                seen += 1
                 try:
                     out.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
                 if len(out) >= MAX_PARSE_ROWS:
                     break
+            if strict and seen and not out:
+                # 有内容却一行都解析不出来 -> 这不是 JSONL, 是上游的 HTML 错误页
+                raise UpstreamNotShapeError("jsonl", body_preview(body))
             return out
         if shape == "xml":
             return {"_xml": body[:JSON_LIMIT_BYTES]}

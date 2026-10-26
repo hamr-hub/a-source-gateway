@@ -182,7 +182,7 @@ Go 网关 ──stdin──▶ {"id":"r1","op":"parse","shape":"object","media_t
 |---|---|
 | **信封形状与字段语义** | 同一份 `data/` + 同一套 `schema_version`(两平面当前都是 `1.2`);字段定义见 [`meta-schema.md`](meta-schema.md) |
 | **注册表**(源 / 端点 / 别名) | `make parity` 把两个平面从 `data/` 构建出的注册表逐项比对(忽略生成时间等易变字段),CI 守住 |
-| **错误类型口径** | 同名同义:`timeout` / `connect_error` / `read_error` / `upstream_error` / `upstream_not_json` / `response_too_large` / `stale` / `offline` / `budget_exceeded` / `not_found` / `contact_required` / `missing_param` —— **传输层失败也用这三个共用名字**(见 §4.3)。`parse_error` 目前只有 Go 侧会产生 —— Python 参照面解析不了正文时报的是 `upstream_not_json` |
+| **错误类型口径** | 同名同义:`timeout` / `connect_error` / `read_error` / `upstream_error` / `upstream_not_json` / `response_too_large` / `stale` / `offline` / `budget_exceeded` / `not_found` / `contact_required` / `missing_param` —— **传输层失败也用这三个共用名字**(见 §4.3)。`parse_error` 两平面都会产生:正文不是端点声明的形状(csv/tsv 拿到 XML/HTML 错误页、jsonl 一行都解析不成功) |
 | **校验错误形状** | 两平面都返回 FastAPI 同形的 `{"detail":[{"type":…,"loc":[…],"msg":…,"input":…}]}` |
 
 > **给读者的话**:如果你看到一个"只在某个平面上出现"的行为 —— 先来这里对一下,

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -308,6 +310,323 @@ func TestGoEngineParsesCSV(t *testing.T) {
 	first, ok := rows[0].([]any)
 	if !ok || len(first) != 2 || first[0] != "a" {
 		t.Errorf("row = %#v", rows[0])
+	}
+}
+
+// An upstream that answers 200 with an HTML error page is not a CSV: the
+// page must not become "data rows". The call has to degrade explicitly,
+// exactly like the JSON shape does (ErrNotJSON).
+func TestGoEngineReportsNotCSVForAnHTMLBody(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<!DOCTYPE html><html><body>503</body></html>")
+	_, err := eng.Parse(context.Background(), "csv", "text/csv", body, Spec{})
+	if err == nil {
+		t.Fatal("a body that is not CSV must be an error, not a list of rows")
+	}
+	if !errors.Is(err, ErrNotShape) {
+		t.Errorf("error = %v, want it to match ErrNotShape", err)
+	}
+	want := "上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: <!DOCTYPE html><html><body>503</body></html>"
+	if err.Error() != want {
+		t.Errorf("error = %q,\nwant     %q", err.Error(), want)
+	}
+}
+
+// The same for TSV: the wording names the shape that was asked for.
+func TestGoEngineReportsNotTSVForAnHTMLBody(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<!DOCTYPE html><html><body>503</body></html>")
+	_, err := eng.Parse(context.Background(), "tsv", "text/tab-separated-values", body, Spec{})
+	if err == nil {
+		t.Fatal("a body that is not TSV must be an error, not a list of rows")
+	}
+	if !errors.Is(err, ErrNotShape) {
+		t.Errorf("error = %v, want it to match ErrNotShape", err)
+	}
+	want := "上游返回的不是 TSV(疑似 XML/HTML 错误页); 正文片段: <!DOCTYPE html><html><body>503</body></html>"
+	if err.Error() != want {
+		t.Errorf("error = %q,\nwant     %q", err.Error(), want)
+	}
+}
+
+// A JSON Lines body whose lines are all broken is not JSON Lines: an HTML
+// error page would silently look like "the source has no data".
+func TestGoEngineReportsNotJSONLWhenNoLineParses(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<!DOCTYPE html><html><body>503</body></html>")
+	_, err := eng.Parse(context.Background(), "jsonl", "application/x-ndjson", body, Spec{})
+	if err == nil {
+		t.Fatal("a body whose lines are all broken must be an error, not an empty list")
+	}
+	if !errors.Is(err, ErrNotShape) {
+		t.Errorf("error = %v, want it to match ErrNotShape", err)
+	}
+	want := "上游返回的不是 JSONL(疑似 HTML 错误页); 正文片段: <!DOCTYPE html><html><body>503</body></html>"
+	if err.Error() != want {
+		t.Errorf("error = %q,\nwant     %q", err.Error(), want)
+	}
+}
+
+// The excerpt is a single line: a raw newline in the message would break
+// the one line protocol of the envelope.
+func TestNotShapeErrorFlattensTheExcerpt(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<!DOCTYPE html>\n<html><body>503</body></html>\n")
+	_, err := eng.Parse(context.Background(), "csv", "text/csv", body, Spec{})
+	if err == nil {
+		t.Fatal("a body that is not CSV must be an error")
+	}
+	want := "上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: <!DOCTYPE html> <html><body>503</body></html>"
+	if err.Error() != want {
+		t.Errorf("error = %q,\nwant     %q", err.Error(), want)
+	}
+	if strings.ContainsAny(err.Error(), "\n\r\t") {
+		t.Errorf("error = %q, the excerpt must be a single line", err.Error())
+	}
+}
+
+// A few broken JSON Lines rows are tolerated: the good rows are kept and
+// the call is not degraded.
+func TestGoEngineKeepsJSONLinesWithBrokenLines(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("{\"a\":1}\nnot json at all\n{\"a\":2}\n")
+	res, err := eng.Parse(context.Background(), "jsonl", "application/x-ndjson", body, Spec{})
+	if err != nil {
+		t.Fatalf("a partially broken JSON Lines body must not be an error: %v", err)
+	}
+	rows, ok := res.Data.([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("rows = %#v", res.Data)
+	}
+}
+
+// A CSV field may start with "<" ("<unknown>" for example): that is not
+// markup and must not be degraded.
+func TestGoEngineDoesNotMistakeACSVFieldForMarkup(t *testing.T) {
+	eng := NewGoEngine(100)
+	for _, body := range []string{
+		"code,note\n<unknown>,x\n",
+		"<unknown>,x\ncode,y\n",
+	} {
+		res, err := eng.Parse(context.Background(), "csv", "text/csv", []byte(body), Spec{})
+		if err != nil {
+			t.Fatalf("body %q must not be degraded: %v", body, err)
+		}
+		rows, ok := res.Data.([]any)
+		if !ok || len(rows) != 2 {
+			t.Fatalf("body %q: rows = %#v", body, res.Data)
+		}
+	}
+}
+
+// An empty body is not a shape mismatch: there is nothing to complain
+// about, the source simply has no data.
+func TestGoEngineAcceptsAnEmptyBody(t *testing.T) {
+	eng := NewGoEngine(100)
+	for _, shape := range []string{"csv", "tsv", "jsonl"} {
+		res, err := eng.Parse(context.Background(), shape, "text/csv", []byte(""), Spec{})
+		if err != nil {
+			t.Fatalf("shape %s: an empty body must not be an error: %v", shape, err)
+		}
+		rows, ok := res.Data.([]any)
+		if !ok || len(rows) != 0 {
+			t.Errorf("shape %s: rows = %#v", shape, res.Data)
+		}
+	}
+}
+
+// The XML and the text shapes keep their pass through behaviour: their
+// contract is "here is the raw body", markup included.
+func TestGoEngineKeepsTheMarkupOfTheXMLAndTextShapes(t *testing.T) {
+	eng := NewGoEngine(100)
+	body := []byte("<!DOCTYPE html><html><body>503</body></html>")
+	if _, err := eng.Parse(context.Background(), "xml", "application/xml", body, Spec{}); err != nil {
+		t.Errorf("the xml shape must not be degraded: %v", err)
+	}
+	if _, err := eng.Parse(context.Background(), "text", "text/plain", body, Spec{}); err != nil {
+		t.Errorf("the text shape must not be degraded: %v", err)
+	}
+}
+
+// The markup detection is narrow on purpose: a body has to look like a
+// document, not merely contain a tag.
+func TestLooksLikeMarkup(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"doctype", "<!DOCTYPE html><html></html>", true},
+		{"doctype is case insensitive", "<!doctype html><html></html>", true},
+		{"html", "<html><body>1</body></html>", true},
+		{"html is case insensitive", "<HTML><body>1</body></HTML>", true},
+		{"xml declaration", `<?xml version="1.0"?><root/>`, true},
+		{"bom before the doctype", "\ufeff<!DOCTYPE html><html></html>", true},
+		{"blank lines before the doctype", "\n  <!DOCTYPE html><html></html>", true},
+		{"a tag with a closing tag", "<error><code>503</code></error>", true},
+		{"a lone tag", "<unknown>", false},
+		{"a csv whose first field starts with a tag", "<unknown>,x\n", false},
+		{"a csv", "a,b\n1,2\n", false},
+		{"a json", `{"a":1}`, false},
+		{"an empty body", "", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeMarkup([]byte(c.body)); got != c.want {
+			t.Errorf("%s: looksLikeMarkup(%q) = %v, want %v", c.name, c.body, got, c.want)
+		}
+	}
+}
+
+// The closing tag marker has to be near the head: a long CSV that carries
+// a "</" somewhere far down is still a CSV.
+func TestLooksLikeMarkupIgnoresAClosingTagFarAway(t *testing.T) {
+	body := "<unknown>," + strings.Repeat("x", markupProbeBytes) + "</later>\n"
+	if looksLikeMarkup([]byte(body)) {
+		t.Errorf("a closing tag beyond the first %d bytes must not turn a CSV into markup", markupProbeBytes)
+	}
+}
+
+// An empty body adds no excerpt to the message, exactly like the JSON
+// counterpart does.
+func TestNotShapeErrorHasNoExcerptForAnEmptyBody(t *testing.T) {
+	cases := []struct {
+		shape string
+		want  string
+	}{
+		{"csv", "上游返回的不是 CSV(疑似 XML/HTML 错误页)"},
+		{"tsv", "上游返回的不是 TSV(疑似 XML/HTML 错误页)"},
+		{"jsonl", "上游返回的不是 JSONL(疑似 HTML 错误页)"},
+	}
+	for _, c := range cases {
+		err := NewNotShapeError(c.shape, "", nil)
+		if err.Error() != c.want {
+			t.Errorf("shape %s: error = %q, want %q", c.shape, err.Error(), c.want)
+		}
+		if !errors.Is(err, ErrNotShape) {
+			t.Errorf("shape %s: error = %v, want it to match ErrNotShape", c.shape, err)
+		}
+	}
+}
+
+// A shape mismatch is not a "not JSON" answer: the gateway has to tell the
+// two apart, because the first one is about the declared shape of the
+// endpoint and the second one about the JSON shape.
+func TestNotShapeIsNotNotJSON(t *testing.T) {
+	err := NewNotShapeError("csv", "<!DOCTYPE html>", nil)
+	if errors.Is(err, ErrNotJSON) {
+		t.Errorf("error = %v, want it to stay apart from ErrNotJSON", err)
+	}
+}
+
+// The wording of a shape mismatch is a contract between the two planes:
+// the manager recognises a worker answer by it.
+func TestParseShapeMismatchReadsTheWording(t *testing.T) {
+	cases := []struct {
+		msg     string
+		shape   string
+		snippet string
+	}{
+		{
+			msg:     "上游返回的不是 CSV(疑似 XML/HTML 错误页); 正文片段: <!DOCTYPE html>",
+			shape:   "csv",
+			snippet: "<!DOCTYPE html>",
+		},
+		{
+			msg:     "上游返回的不是 TSV(疑似 XML/HTML 错误页); 正文片段: <!DOCTYPE html>",
+			shape:   "tsv",
+			snippet: "<!DOCTYPE html>",
+		},
+		{
+			msg:     "上游返回的不是 JSONL(疑似 HTML 错误页); 正文片段: <!DOCTYPE html>",
+			shape:   "jsonl",
+			snippet: "<!DOCTYPE html>",
+		},
+		{
+			msg:     "上游返回的不是 CSV(疑似 XML/HTML 错误页)",
+			shape:   "csv",
+			snippet: "",
+		},
+	}
+	for _, c := range cases {
+		shape, snippet, ok := parseShapeMismatch(c.msg)
+		if !ok {
+			t.Fatalf("parseShapeMismatch(%q) did not recognise the wording", c.msg)
+		}
+		if shape != c.shape || snippet != c.snippet {
+			t.Errorf("parseShapeMismatch(%q) = %q/%q, want %q/%q", c.msg, shape, snippet, c.shape, c.snippet)
+		}
+	}
+	// The wording of a "not JSON" answer is a different one: it must not
+	// be read as a shape mismatch.
+	if _, _, ok := parseShapeMismatch("上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: <!DOCTYPE html>"); ok {
+		t.Error("the wording of a not JSON answer must not be read as a shape mismatch")
+	}
+}
+
+// The two planes have to reach the same conclusion for the same body: the
+// wording and the detection are a contract between them. The Python plane is
+// asked directly, so that a change on one side cannot drift away from the
+// other one unnoticed.
+func TestThePlanesAgreeOnTheShapeMismatch(t *testing.T) {
+	python, srcDir := pythonPlane(t)
+	bodies := []string{
+		"<!DOCTYPE html><html></html>",
+		"<!doctype html><html></html>",
+		"<HTML><body>1</body></HTML>",
+		`<?xml version="1.0"?><root/>`,
+		"<unknown>",
+		"<unknown>,x\n",
+		"a,b\n1,2\n",
+		"",
+		"   \n\t ",
+		"\ufeff<!DOCTYPE html><html></html>",
+		" \ufeff<html><body>1</body></html>",
+		"<error><code>503</code></error>",
+	}
+	encoded, err := json.Marshal(bodies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const script = `
+import json, sys
+from a_source_gateway.parser_worker import looks_like_markup, shape_mismatch_message
+bodies = json.loads(sys.argv[1])
+print(json.dumps({
+    "markup": [looks_like_markup(b) for b in bodies],
+    "words": {s: shape_mismatch_message(s, "<片段>") for s in ("csv", "tsv", "jsonl")},
+}, ensure_ascii=False))
+`
+	cmd := exec.Command(python, "-c", script, string(encoded))
+	cmd.Env = append(os.Environ(), "PYTHONPATH="+srcDir)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("the python plane did not answer: %v", err)
+	}
+	var reply struct {
+		Markup []bool            `json:"markup"`
+		Words  map[string]string `json:"words"`
+	}
+	if err := json.Unmarshal(out, &reply); err != nil {
+		t.Fatalf("the python plane answered %q: %v", out, err)
+	}
+	if len(reply.Markup) != len(bodies) {
+		t.Fatalf("the python plane answered %d bodies, want %d", len(reply.Markup), len(bodies))
+	}
+	for i, body := range bodies {
+		want := reply.Markup[i]
+		if got := looksLikeMarkup([]byte(body)); got != want {
+			t.Errorf("body %q: the Go plane says markup=%v, the python plane says %v", body, got, want)
+		}
+	}
+	for _, shape := range []string{"csv", "tsv", "jsonl"} {
+		want, ok := reply.Words[shape]
+		if !ok {
+			t.Fatalf("the python plane did not answer for the shape %s", shape)
+		}
+		got := NewNotShapeError(shape, "<片段>", nil).Error()
+		if got != want {
+			t.Errorf("shape %s: the Go plane says %q, the python plane says %q", shape, got, want)
+		}
 	}
 }
 
