@@ -5,16 +5,20 @@ verify_source.py - 新增源的证据闸门: 真的查一次, 然后断言登记
     python3 scripts/verify_source.py crossref --endpoint works
     python3 scripts/verify_source.py crossref --json        # 机器可读(CI/agent 用)
 
-三种结局严格区分(退出码不同):
+四种结局严格区分(退出码不同):
     0 verified     —— 真的取到数据, 声明的元数据全部对上
     1 failed/degraded —— 取到了但降级了, 或声明的 item_path/total_field 对不上
     2 unreachable  —— 上游根本连不上(这是"环境问题", 不是"源坏了")
+    3 credentials_missing —— 端点定义没问题, 只是本机没配对应的 A_GATEWAY_* 凭据
+
+后两类都不算"元数据失真": 把环境/凭据问题混进失败数, 报告就没有信号了。
 
 "连不上"绝不等于"源有问题", 也不会伪造任何数据。
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import subprocess
@@ -49,17 +53,31 @@ _bs = _bootstrap()
 
 # ── 工具 ─────────────────────────────────────────────────────────────────
 def resolve_path(payload: Any, path: str) -> Any:
-    """按点号路径取值(与网关 Resolver._project 解析 total_field 的规则一致)。"""
+    """按点号路径取值(与网关 Resolver._project 解析 total_field 的规则一致)。
+
+    点号切分取不到时, 再按整串字面键试一次 —— 上游 OData 的 "@odata.count"
+    这类键名本身带点, 只按点号切分必定取不到。三个实现(Python resolver.py、
+    Python parser_worker.py、Go parser.go)都有这个兜底, 复验脚本不跟上就会把
+    正确的元数据判成错误(WHO GHO 的 total_field 就是 "@odata.count")。
+    """
     node: Any = payload
     for part in path.split("."):
         if isinstance(node, dict):
-            node = node.get(part)
+            if part not in node:
+                break
+            node = node[part]
         elif isinstance(node, list) and part.isdigit():
             idx = int(part)
-            node = node[idx] if idx < len(node) else None
+            if idx >= len(node):
+                break
+            node = node[idx]
         else:
-            return None
-    return node
+            break
+    else:
+        return node
+    if isinstance(payload, dict) and path in payload:
+        return payload[path]
+    return None
 
 
 def http_get(url: str, timeout: float, user_agent: str,
@@ -143,6 +161,10 @@ class Assertions:
         self.items.append({"name": name, "ok": bool(ok), "severity": severity, "detail": detail})
         return bool(ok)
 
+    def drop(self, name: str) -> None:
+        """撤销同名断言 —— 用于后来发现该断言在当前情形下不成立(而非失败)。"""
+        self.items[:] = [i for i in self.items if i["name"] != name]
+
     @property
     def hard_failures(self) -> list[dict[str, Any]]:
         return [i for i in self.items if i["severity"] == "hard" and not i["ok"]]
@@ -154,6 +176,36 @@ class Assertions:
     @property
     def ok(self) -> bool:
         return not self.hard_failures
+
+
+def quota_blocked(payload: Any) -> str:
+    """识别"HTTP 200 但配额/限流耗尽"的响应。
+
+    典型例子是 BLS: 状态码 200, 正文里 status=REQUEST_NOT_PROCESSED +
+    "daily threshold ... has been reached"。把它当成 item_path 写错,
+    会让人去改一份本来正确的元数据。返回人话原因, 没问题返回 ""。
+
+    判定要同时满足两条, 否则容易误伤:
+      1. status 像个"拒绝"(ERROR / FAIL / NOT_PROCESSED / LIMIT ...),
+         而不是任意一个非 OK 的业务状态;
+      2. message 里确实提到了配额/限流。
+    """
+    if not isinstance(payload, dict):
+        return ""
+    status = str(payload.get("status") or "").upper()
+    if not status or status in ("OK", "200", "SUCCESS"):
+        return ""
+    refusal_tokens = ("ERROR", "FAIL", "NOT_PROCESSED", "INVALID", "DENIED",
+                      "LIMIT", "EXCEEDED", "THRESHOLD", "QUOTA", "REJECTED")
+    if not any(tok in status for tok in refusal_tokens):
+        return ""
+    parts = payload.get("message") or []
+    if isinstance(parts, str):
+        parts = [parts]
+    text = " ".join(str(p) for p in parts)
+    if any(k in text.lower() for k in ("threshold", "quota", "rate limit", "exceeded")):
+        return f"status={status}: {text[:160]}"
+    return ""
 
 
 def check_declared_fields(payload: Any, ep: dict, item_path: str | None,
@@ -227,6 +279,10 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
 
     凭据参数(env)优先从环境变量取 —— 数据文件里不该有真实 key,
     也不能拿占位符(example="YOUR_XXX")去敲上游。
+
+    missing 里放的是**参数名本身**(不带任何后缀): 调用方要靠名字判断
+    "缺的是不是凭据"(见 describe_missing / credential 判定), 名字一旦被
+    拼成人话, 就没法再按名字比对端点定义。
     """
     params: dict[str, Any] = {}
     missing: list[str] = []
@@ -239,8 +295,6 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
                 env_value = os.environ.get(p["env"], "")
                 if env_value:
                     params[name] = env_value
-                elif p.get("example") is not None or "default" in p:
-                    missing.append(f"{name}(环境变量 {p['env']} 未设置)")
                 else:
                     missing.append(name)
             elif p.get("example") is not None:
@@ -253,6 +307,16 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
             params[name] = p["default"]
     params.update(override or {})
     return params, missing
+
+
+def describe_missing(ep: dict[str, Any], missing: list[str]) -> list[str]:
+    """把缺掉的参数名说成人话: 凭据类的要带上环境变量名。"""
+    env_by_name = {p.get("name"): p.get("env") for p in ep.get("params", []) if p.get("name")}
+    out: list[str] = []
+    for name in missing:
+        env = env_by_name.get(name)
+        out.append(f"{name}(环境变量 {env} 未设置)" if env else name)
+    return out
 
 
 def is_slow(row: dict[str, Any]) -> bool:
@@ -303,6 +367,7 @@ def run_all(args: argparse.Namespace) -> int:
     unreachable = 0
     failures = 0
     slow = 0
+    credentials_missing = 0
     cmd_base = [sys.executable, str(Path(__file__).resolve()), "--json",
                 "--limit", str(args.limit), "--timeout", str(args.timeout),
                 "--resolver-backend", args.resolver_backend]
@@ -333,6 +398,10 @@ def run_all(args: argparse.Namespace) -> int:
         status = row.get("status", "failed")
         if status == "unreachable":
             unreachable += 1
+        elif status == "credentials_missing":
+            # 端点定义是对的, 只是本机没配 A_GATEWAY_* 凭据。
+            # 与 unreachable 同理: 不计入"元数据失真"的失败数。
+            credentials_missing += 1
         elif is_slow(row):
             # 降级原因是跨境往返慢/预算不够, 不是元数据写错。
             # 与"真的写错了"混在一起统计, 报告就没有信号了:
@@ -351,10 +420,82 @@ def run_all(args: argparse.Namespace) -> int:
         "failed": failures,
         "slow": slow,
         "unreachable": unreachable,
+        "credentials_missing": credentials_missing,
         "results": results,
     }
     json.dump(summary, sys.stdout, ensure_ascii=False, indent=2)
     return min(failures, 100)
+
+
+_COL_NAME = "数据源"
+_COL_VERIFIED = "最后验证"
+# 两份清单按 国别 分流(规则见 AGENTS.md §2): 同一个源只应出现在其中一份里,
+# 所以写回时两份都扫一遍, 命中哪份改哪份 —— 漏掉一份, 那条日期就会静默消失。
+_INVENTORY_FILES = ("source_inventory.csv", "source_inventory_cn.csv")
+
+
+def write_verified_dates(args: argparse.Namespace) -> int:
+    """把本批次已核过的源的复核日期写回两份清单 CSV。
+
+    守规矩的点有两个:
+      1. 只有源名下每一个被复验过的端点都是 verified, 才敢把日期写成"这个源已核对"。
+         任何 failed/degraded 都意味着元数据对不上, 那天就不是"核对通过"。
+      2. unreachable(环境问题) 与 credentials_missing(本机没配凭据) 默认也拦下来,
+         除非显式给了 --allow-partial-date —— 宁可让日期空着(运行时读到
+         "unverified" 哨兵), 也不写一个自己没跑通过的日期。
+
+    返回实际改写的行数。
+    """
+    report_path = Path(args.recap_json) if getattr(args, "recap_json", "") else None
+    if report_path is None or not report_path.is_file():
+        print("✗ --write-verified-date 需要 --recap-json 指向本次汇总 JSON",
+              file=sys.stderr)
+        return 0
+    try:
+        summary = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"✗ 读 {report_path} 失败: {exc}", file=sys.stderr)
+        return 0
+
+    statuses: dict[str, list[str]] = {}
+    for row in summary.get("results") or []:
+        name = str(row.get("source_name") or row.get("resolved_source") or "").strip()
+        if name:
+            statuses.setdefault(name, []).append(str(row.get("status") or "failed"))
+
+    blocked = {"failed", "degraded"}
+    if not args.allow_partial_date:
+        blocked |= {"unreachable", "credentials_missing"}
+
+    ok = {name for name, items in statuses.items() if not blocked.intersection(items)}
+    if not ok:
+        return 0
+
+    written = 0
+    for rel in _INVENTORY_FILES:
+        path = Path(args.data_dir) / rel if args.data_dir else (
+            Path(__file__).resolve().parent.parent / "data" / rel)
+        if not path.is_file():
+            continue
+        with path.open(newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        if not rows:
+            continue
+        fields = list(rows[0].keys())
+        if _COL_VERIFIED not in fields:
+            continue
+        changed = False
+        for r in rows:
+            if str(r.get(_COL_NAME) or "").strip() in ok and r.get(_COL_VERIFIED) != args.date:
+                r[_COL_VERIFIED] = args.date
+                changed = True
+                written += 1
+        if changed:
+            with path.open("w", newline="", encoding="utf-8") as fh:
+                w = csv.DictWriter(fh, fieldnames=fields)
+                w.writeheader()
+                w.writerows(rows)
+    return written
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -362,7 +503,8 @@ def main(argv: list[str] | None = None) -> int:
         prog="verify_source.py",
         description="证据闸门: 真查一次上游, 断言登记的 item_path/total_field/fields 是真的。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="退出码: 0=已用真实数据验证通过 / 1=断言失败或降级 / 2=上游不可达")
+        epilog=("退出码: 0=已用真实数据验证通过 / 1=断言失败或降级 / "
+                "2=上游不可达 / 3=缺凭据(需设 A_GATEWAY_* 环境变量)"))
     ap.add_argument("source", nargs="?", default="",
                     help="数据源 id / 名称 / 别名(--all 时省略)")
     ap.add_argument("--endpoint", default="", help="端点 id(默认取第一个非 entry 端点)")
@@ -381,9 +523,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="网关可用时不再单独取一次原文(只按网关信封断言)")
     ap.add_argument("--direct-only", action="store_true",
                     help="不查网关, 直接打上游(只验源本身的元数据, 不验网关链路)")
+    ap.add_argument("--allow-partial-date", action="store_true",
+                    help="配合 --write-verified-date: 该源只要没出现 failed/degraded 就写日期"
+                         "(容忍 unreachable / credentials_missing)")
     ap.add_argument("--via-gateway", action="store_true",
                     help="--all 时仍走网关链路(默认直连上游; 走网关会因 400ms 预算大面积降级)")
+    ap.add_argument("--write-verified-date", action="store_true",
+                    help="配合 --recap-json: 把这批复验结果里的日期写回清单 CSV 的『最后验证』列")
+    ap.add_argument("--recap-json", default="",
+                    help="--write-verified-date 读的汇总 JSON 路径(上一次 --all --json 的输出)")
+    ap.add_argument("--date", default=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    help="要写入的 ISO 日期(默认今天)")
     args = ap.parse_args(argv)
+
+    if args.write_verified_date:
+        # 写日期是纯本地后处理, 不需要跑网络, 也不该要求 --all。
+        print(f"最后验证写回: {write_verified_dates(args)} 行",
+              file=sys.stderr)
+        return 0
 
     if args.all:
         if args.source:
@@ -395,7 +552,8 @@ def main(argv: list[str] | None = None) -> int:
         # 每个源都"正常地"降级, 报告变成一份网络延迟报告而不是元数据报告。
         if not args.via_gateway:
             args.direct_only = True
-        return run_all(args)
+        rc = run_all(args)
+        return rc
     if not args.source:
         ap.error("缺少数据源 id/名称/别名(或用 --all 复验全部)")
 
@@ -462,15 +620,26 @@ def main(argv: list[str] | None = None) -> int:
     params, missing_params = collect_params(ep, override)
     used_params = dict(params)
     if missing_params:
-        assertions.add("required_params_available", False, "hard",
-                       f"必填参数取不到值: {', '.join(missing_params)};"
-                       f"凭据参数请设对应环境变量或用 --params 补上")
+        # 缺凭据 ≠ 元数据错: 这些源的端点定义是对的, 只是本机没配对应的
+        # A_GATEWAY_* 环境变量。混进 failed 会让"元数据失真"这个信号失真。
+        missing_detail = describe_missing(ep, missing_params)
+        env_by_name = {p.get("name"): p.get("env") for p in ep.get("params", []) if p.get("name")}
+        missing_env = [n for n in missing_params if env_by_name.get(n)]
+        credential_only = bool(missing_env) and len(missing_env) == len(missing_params)
+        assertions.add(
+            "required_params_available",
+            False,
+            "warn" if credential_only else "hard",
+            f"必填参数取不到值: {', '.join(missing_detail)};"
+            f"凭据参数请设对应环境变量或用 --params 补上")
         report = build_report(src, ep, runtime, args, gateway_url, assertions, warnings,
-                              errors, status="failed", transport=transport, params=used_params,
+                              errors,
+                              status="credentials_missing" if credential_only else "failed",
+                              transport=transport, params=used_params,
                               gateway_call=gateway_call)
-        report["errors"].append(f"必填参数取不到值: {', '.join(missing_params)}")
+        report["errors"].append(f"必填参数取不到值: {', '.join(missing_detail)}")
         emit(report, args.json)
-        return 1
+        return 3 if credential_only else 1
 
     resp_spec = ep.get("response") or {}
     item_path = resp_spec.get("item_path")
@@ -563,6 +732,11 @@ def main(argv: list[str] | None = None) -> int:
     payload: Any = None
     data: Any = None
     body_not_json = False
+    # 配额/限流状态: HTTP 200 但正文里写着"没给数据"(如 BLS 的 REQUEST_NOT_PROCESSED)。
+    # 非空时说明上游活着但配额耗尽 —— 不是元数据写错。正文解析出来后才知道。
+    quota_note = ""
+    # 结构断言的跳过理由(空串 = 正常断言)。
+    structure_skip_reason = ""
     # 通用透传端点(entry)按设计就是"官方入口直取": 正文是 HTML 页面属于预期结果,
     # 不是错误页。对它做 JSON 断言会把几十个只有 entry 端点的源全判成失败,
     # 从而淹没真正需要修的源。这里只对它断言"入口可达且返回了正文"。
@@ -595,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
             assertions.add("data_not_empty", True, "warn", skip_reason)
         if payload is not None:
             data, total, truncated = runtime.project(payload, ep, limit=args.limit)
+            quota_note = quota_blocked(payload)
         if upstream_status is not None and upstream_status >= 400:
             assertions.add("upstream_status_ok", False, "hard",
                            f"上游返回 HTTP {upstream_status}: {text[:200]}")
@@ -613,34 +788,53 @@ def main(argv: list[str] | None = None) -> int:
                            f"上游 HTTP {upstream_status}, {len(raw_body)}B")
             assertions.add("upstream_not_error", True, "hard",
                            "通用透传端点取到官方入口页面(非结构化数据), 入口可达")
+        elif quota_note:
+            # HTTP 200 但正文里带着配额/限流状态(如 BLS 的 REQUEST_NOT_PROCESSED +
+            # "daily threshold ... reached"): 上游没给数据, 但 item_path 声明本身是对的。
+            # 报成 item_path 写错会让人去改一份正确的元数据。
+            assertions.add("upstream_status_ok", True, "hard",
+                           f"上游 HTTP {upstream_status}, {len(raw_body)}B")
+            assertions.add("upstream_not_error", False, "hard",
+                           f"上游配额/限流未返回数据: {quota_note}")
+            # 结构断言在下面统一处理(结构断言块跑在状态分支之后, 提前 drop 会
+            # 被后面重新 add 覆盖掉 —— 那正是这个 bug 的来由)。
+            structure_skip_reason = "上游配额受限未返回数据, 结构断言无意义, 已跳过"
         else:
             assertions.add("upstream_status_ok", True, "hard",
                            f"上游 HTTP {upstream_status}, {len(raw_body)}B")
             assertions.add("upstream_not_error", True, "hard", "上游正常返回, 未降级")
         if payload is not None:
-            if item_path:
-                node = resolve_path(payload, item_path)
-                ok = isinstance(node, list)
-                assertions.add("item_path_resolves_to_list", ok, "hard",
-                               f"item_path={item_path!r} → {type(node).__name__}"
-                               f"{f'(长度 {len(node)})' if isinstance(node, list) else ''}")
+            if structure_skip_reason:
+                # 配额受限: 结构断言无意义(拿不到数据比不出字段), 统一记成"已跳过"。
+                for name in ("item_path_resolves_to_list", "total_field_resolves_to_number",
+                             "declared_fields_present", "data_not_empty"):
+                    assertions.drop(name)
+                    assertions.add(name, True, "warn", structure_skip_reason)
             else:
-                assertions.add("item_path_resolves_to_list", True, "warn",
-                               "端点没声明 item_path, 跳过该断言")
-            if total_field:
-                node = resolve_path(payload, total_field)
-                ok = isinstance(node, int | float) and not isinstance(node, bool)
-                assertions.add("total_field_resolves_to_number", ok, "hard",
-                               f"total_field={total_field!r} → {node!r}")
-            else:
-                assertions.add("total_field_resolves_to_number", True, "warn",
-                               "端点没声明 total_field, 跳过该断言")
-            check_declared_fields(payload, ep, item_path, assertions)
-            if isinstance(data, list) and not data:
-                assertions.add("data_not_empty", False, "warn", "取到的是空列表(可能是过滤条件太窄)")
-            else:
-                assertions.add("data_not_empty", True, "warn",
-                               f"取到 {len(data) if isinstance(data, list) else 1} 条")
+                if item_path:
+                    node = resolve_path(payload, item_path)
+                    ok = isinstance(node, list)
+                    assertions.add("item_path_resolves_to_list", ok, "hard",
+                                   f"item_path={item_path!r} → {type(node).__name__}"
+                                   f"{f'(长度 {len(node)})' if isinstance(node, list) else ''}")
+                else:
+                    assertions.add("item_path_resolves_to_list", True, "warn",
+                                   "端点没声明 item_path, 跳过该断言")
+                if total_field:
+                    node = resolve_path(payload, total_field)
+                    ok = isinstance(node, int | float) and not isinstance(node, bool)
+                    assertions.add("total_field_resolves_to_number", ok, "hard",
+                                   f"total_field={total_field!r} → {node!r}")
+                else:
+                    assertions.add("total_field_resolves_to_number", True, "warn",
+                                   "端点没声明 total_field, 跳过该断言")
+                check_declared_fields(payload, ep, item_path, assertions)
+                if isinstance(data, list) and not data:
+                    assertions.add("data_not_empty", False, "warn",
+                                   "取到的是空列表(可能是过滤条件太窄)")
+                else:
+                    assertions.add("data_not_empty", True, "warn",
+                                   f"取到 {len(data) if isinstance(data, list) else 1} 条")
     else:
         # 只有网关信封(没取原文): 按信封断言
         meta = envelope.get("meta") if envelope else {}

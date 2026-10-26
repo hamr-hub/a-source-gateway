@@ -308,7 +308,7 @@ HTTP/1.1 200 OK
           <thead><tr><th>参数</th><th>类型</th><th>默认</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td><code>family</code></td><td>string</td><td>空</td><td>按分类过滤，模糊匹配</td></tr>
-            <tr><td><code>q</code></td><td>string</td><td>空</td><td>关键词，搜 <strong>源 id / 别名 / 名称 / 摘要 / 机构 / 国别 / 分类 / 端点 id</strong>（大小写不敏感，命中任意一处即返回）</td></tr>
+            <tr><td><code>q</code></td><td>string</td><td>空</td><td>关键词，搜 <strong>源 id / 别名 / 名称 / 摘要 / 机构 / 国别 / 分类 / 端点 id</strong>（大小写不敏感，命中任意一处即返回）。<strong>多个词用空格分隔，按 AND 匹配</strong>：每个词都要命中才算命中（<code>OFAC SDN</code>、<code>银行 名单</code> 都这样用）。空白字符视作没有筛选。</td></tr>
             <tr><td><code>limit</code></td><td>int</td><td><code>200</code></td><td>最多返回多少条，取值 <strong>1–500</strong>，越界返回 <span class="badge warn">422</span></td></tr>
           </tbody>
         </table>
@@ -603,7 +603,7 @@ $ curl -s -X POST http://127.0.0.1:8848/v1/query \
           <thead><tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td><code>queries</code></td><td>array</td><td>否</td><td>—</td><td>显式扇出的查询列表；非空时逐项各跑一次查询</td></tr>
-            <tr><td><code>q</code></td><td>string</td><td>否</td><td>—</td><td>关键词扇出：按搜索索引选源（仅在 <code>queries</code> 缺省或为空时生效）</td></tr>
+            <tr><td><code>q</code></td><td>string</td><td>否</td><td>—</td><td>关键词扇出：按搜索索引选源（仅在 <code>queries</code> 缺省或为空时生效）。多个词按 AND 匹配，规则与 <code>GET /v1/sources?q=</code> 相同。</td></tr>
             <tr><td><code>limit</code></td><td>int</td><td>否</td><td><code>5</code></td><td>每条查询最多返回多少条，取值 <strong>1–100</strong>；越界会被<strong>钳到范围内</strong>（不报错）</td></tr>
             <tr><td><code>max_sources</code></td><td>int</td><td>否</td><td><code>12</code></td><td>关键词扇出时最多选多少个源，取值 <strong>1–50</strong>；越界同样被钳位；<strong>只对 <code>q</code> 形态生效</strong></td></tr>
           </tbody>

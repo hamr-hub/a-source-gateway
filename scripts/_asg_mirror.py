@@ -456,6 +456,33 @@ def parse_body(body: str, shape: str, strict: bool = False) -> Any:
         return {"_text": body[:200_000]}
 
 
+def _dig(node: Any, path: str) -> Any:
+    """点号路径取值; 列表只支持数字下标。
+
+    点号切分取不到时, 再按整串字面键试一次 —— 上游 OData 的 "@odata.count"
+    这类键名本身带点, 按 "." 切永远取不到它(与 resolver._dig_path /
+    parser_worker._dig / Go parser.lookupTotalPath 同语义)。
+    """
+    root = node
+    for part in path.split("."):
+        if isinstance(node, dict):
+            if part not in node:
+                break
+            node = node[part]
+        elif isinstance(node, list) and part.isdigit():
+            idx = int(part)
+            if idx >= len(node):
+                break
+            node = node[idx]
+        else:
+            break
+    else:
+        return node
+    if isinstance(root, dict) and path in root:
+        return root[path]
+    return None
+
+
 def project(payload: Any, ep: dict, limit: int = 20, fields: list[str] | None = None):
     total = None
     resp = ep.get("response", {})
@@ -463,16 +490,7 @@ def project(payload: Any, ep: dict, limit: int = 20, fields: list[str] | None = 
     item_path = resp.get("item_path")
 
     if total_field:
-        node: Any = payload
-        for part in total_field.split("."):
-            if isinstance(node, dict):
-                node = node.get(part)
-            elif isinstance(node, list) and part.isdigit():
-                idx = int(part)
-                node = node[idx] if idx < len(node) else None
-            else:
-                node = None
-                break
+        node = _dig(payload, total_field)
         if isinstance(node, int | float):
             total = int(node)
 
@@ -484,16 +502,7 @@ def project(payload: Any, ep: dict, limit: int = 20, fields: list[str] | None = 
         # 否则保持整个数组(旧行为, 不能让"顶层数组"变成空列表)。
         head = item_path.split(".")[0]
         if isinstance(payload, dict) or head.isdigit():
-            node = payload
-            for part in item_path.split("."):
-                if isinstance(node, dict):
-                    node = node.get(part)
-                elif isinstance(node, list) and part.isdigit():
-                    idx = int(part)
-                    node = node[idx] if idx < len(node) else None
-                else:
-                    node = None
-                    break
+            node = _dig(payload, item_path)
             data = node if node is not None else []
         else:
             data = payload

@@ -2,6 +2,69 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-10-26
+
+搜索广度:多词关键词从"一个都搜不到"到"按 AND 命中";
+信息准确性:证据关卡不再把上游配额耗尽与缺凭据误报成"元数据写错了";
+全量复验 116 个源,修掉一处**登记的端点与数据源主题不符**的失真元数据。
+
+### 变更
+- **多词关键词按 AND 匹配(行为变更)**:`q` 以前是**整串**子串匹配,于是
+  `OFAC SDN`、`银行 名单`、`sec edgar`、`stock list` 这类两三个词都合理的查询
+  **一个都搜不到** —— 明明每个词分别都能命中不同源的文本。现在空格分隔的每个词
+  都要命中才算命中(AND 语义),单词查询的行为完全没变。
+  - 选 AND 而不是 OR:OR 会把真正相关的源挤出扇出上限(搜索一次最多扇出 12 个源),
+    **精度比数量重要**。
+  - 空白字符视作没有筛选(与 `family` 空值同义)。
+  - 实测命中:`OFAC SDN`→1(`ofac_sdn`)、`World Bank`→2、`stock list`→3、
+    `银行 名单`→2、`证券 交易`→4;`sanctions zzzznotarealterm`→0(AND 语义确实生效)。
+  - 两个平面(Go 网关 / Python 参照面)对 14 组查询给出**完全一致**的命中集。
+- **证据关卡新增退出码 `3`**:端点定义是对的、只是本机没配凭据(必填参数全挂在
+  环境变量上而本机没设),以前报成 `failed`,会让人去改一份**本来正确**的元数据。
+  现在单独归类为 `credentials_missing`。实测 EIA API 在没设 `A_GATEWAY_EIA_API_KEY`
+  时如实报这个状态。
+
+### 修复
+- **配额耗尽被误报成"元数据写错了"**:BLS 每日配额用尽时上游返回的是
+  **HTTP 200** + `{"status":"REQUEST_NOT_PROCESSED","message":["...daily threshold..."]}`,
+  以前结构断言会拿这份正文去比对 `item_path`,报成"路径写错了" —— 照着改就是
+  把一份正确的元数据改坏。现在识别这类响应:结构断言如实跳过(标 `warn`),
+  真正的原因写在 `upstream_not_error` 里(实测 BLS 返回 200 / 224B /
+  `status=REQUEST_NOT_PROCESSED`,退出码 1,不再误指元数据)。
+- **stdlib 镜像缺了"带点字面键"兜底**:`scripts/_asg_mirror.py` 是 verify/demo
+  在没装网关包时的兜底实现,它的路径取值只按 `.` 切分,取不到键名本身带点的字段 ——
+  而真实端点 WHO GHO 的 `total_field` 就是 `@odata.count`。现在镜像与参照面、
+  worker、Go parser 语义一致(实测同一请求两边都得到 `3102`)。
+  复验脚本自己的 `resolve_path` 里那段兜底此前是**死代码**(前面提前 return),
+  也一并修好。
+- **Census 国际贸易 API 登记的端点与数据源主题不符**:这个源在 `endpoints.json` 里
+  挂的是一个 `population` 端点,URL 指向 PEP 的**县人口**数据集
+  (`/data/2023/pep/population?get=NAME,POP&for=county:*`)—— 与"国际贸易"毫无关系,
+  按登记去查会得到一份跟这个源无关的数据,而且不会报错。现在换成两个真实存在的端点:
+  `exports_hs`(按 HS 编码 x 国别的**月度出口**)与 `imports_hs`(月度进口),
+  取自官方 `exports/hs` 与 `imports/hs` 两个数据集。
+  - 每个字段都能追到上游:变量名来自各数据集公开的 `variables.json`,
+    请求样例来自 `examples.json`(两者均 HTTP 200、无需 key)。
+  - `time`(年月)与 `COMM_LVL`(HS2/HS4/HS6/HS10 聚合层级)在该数据集里是必填谓词,
+    已按 obligate-like 登记为必填并给 `default`。
+  - 实测无 key 时这两个 URL 302 跳 `/data/missing_key.html`;带 `DEMO_KEY` 跳
+    `invalid_key.html` —— 都已写进参数的 desc,不复述"DEMO_KEY 可用"这种过时说法。
+  - 注册表端点数随之 161 → 162,文档站统计条已同步(`docs-check` 会拦)。
+
+### 其它
+- **版本号三处一致变成自动守卫**:新增测试盯住 `pyproject.toml`、
+  `a_source_gateway.__version__`、`gateway config.Version` —— 少同步一处就会出现
+  "网关自述的版本和 pip 装的包对不上"这类最难查的不一致。
+- **复验日期写回变成受控操作**:以前要把某次全量复验的日期写进清单的
+  `最后验证` 列,得手写一段临时脚本 —— 日期追不到是哪批复验给的,也无法重跑。
+  现在 `verify_source.py --all --json` 出汇总,`--write-verified-date
+  --recap-json <汇总>` 负责写回,评分规则就是"哪些才敢写":
+  - 源名下**每一个**被复验过的端点都 `verified` 才落笔;`failed` / `degraded` 一律不写;
+  - `unreachable`(环境问题)与 `credentials_missing`(本机没配凭据)默认也不写 ——
+    它们不是"核对通过",只是这次没能核对,确实要记下来时才显式 `--allow-partial-date`;
+  - 两份清单都会扫(漏一份,国内源的日期就静默消失),写回保持 CRLF 行尾,重复跑是幂等的。
+  - 这批改写了 46 行;`最后验证` 列的覆盖率从 36/107 提到 **82/107**(国内清单 8/34)。
+
 ## [1.4.1] - 2026-10-26
 
 信息准确性:堵住非 JSON 形状上的"假成功";并给新接口补上延迟基线。

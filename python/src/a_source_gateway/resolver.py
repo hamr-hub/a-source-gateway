@@ -336,13 +336,18 @@ class Resolver:
         `q` 对每个源的**可搜索文本**做子串匹配(大小写不敏感): canonical id、
         全部别名、name、org、country、family、summary、该源全部端点 id。
         以前只匹配 name/summary/org/country/family, 于是"能按别名调用、却搜不到"。
+
+        多词查询按 AND 匹配: 空格分隔的每个词都要出现在源的搜索文本里。
+        以前是**整串**子串匹配, 于是 "sanctions list" 一个都不命中 —— 明明两个词
+        分别都能命中。选 AND 而不是 OR: OR 会把真正相关的源挤出扇出上限
+        (搜索一次最多扇出 12 个源), 精度比数量重要。
         """
         out = []
-        ql = q.lower()
+        terms = q.lower().split()
         for s in self.sources.values():
             if family and family not in s["family"]:
                 continue
-            if ql and ql not in self.search.haystack.get(s["id"], ""):
+            if terms and not all(t in self.search.haystack.get(s["id"], "") for t in terms):
                 continue
             out.append({
                 "id": s["id"], "name": s["name"],

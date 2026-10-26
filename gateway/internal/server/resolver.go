@@ -994,8 +994,13 @@ func (r *Resolver) GetSource(sourceID string) *registry.SourceSpec {
 // id, every alias, the name, the org, the country, the family, the summary
 // and every endpoint id. The haystack is computed when the registry is
 // built, so the search itself allocates nothing.
+//
+// 多词查询按 AND 匹配: 空格分隔的每个词都要出现在源的搜索文本里。
+// 以前是**整串**子串匹配, 于是 "sanctions list" 一个都不命中 —— 明明两个词
+// 分别都能命中。选 AND 而不是 OR: OR 会把真正相关的源挤出扇出上限(搜索一次
+// 最多扇出 12 个源), 精度比数量重要。
 func (r *Resolver) ListSources(family, q string) []any {
-	ql := strings.ToLower(q)
+	terms := searchTerms(q)
 	out := []any{}
 	if r.index == nil {
 		return out
@@ -1005,7 +1010,7 @@ func (r *Resolver) ListSources(family, q string) []any {
 		if family != "" && !strings.Contains(s.Family, family) {
 			continue
 		}
-		if ql != "" && !strings.Contains(e.Haystack, ql) {
+		if len(terms) > 0 && !matchesAllTerms(e.Haystack, terms) {
 			continue
 		}
 		item := parser.NewObject()
@@ -1032,6 +1037,26 @@ func (r *Resolver) ListSources(family, q string) []any {
 		out = append(out, item)
 	}
 	return out
+}
+
+// searchTerms splits a keyword query into the terms that must all match.
+//
+// 多个词用空白分隔, 按 AND 匹配(每个词都要出现在源的搜索文本里)。
+// 空白字符视作没有筛选 —— 与 family 的空值同义。
+func searchTerms(q string) []string {
+	return strings.Fields(strings.ToLower(q))
+}
+
+// matchesAllTerms reports whether the haystack contains every term.
+//
+// 子串匹配(而不是分词匹配): 中文没有空格, "银行" 必须能命中"银行监督管理"。
+func matchesAllTerms(haystack string, terms []string) bool {
+	for _, t := range terms {
+		if !strings.Contains(haystack, t) {
+			return false
+		}
+	}
+	return true
 }
 
 // Describe returns the description of a source and one of its endpoints.

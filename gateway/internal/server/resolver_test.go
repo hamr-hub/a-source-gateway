@@ -546,6 +546,56 @@ func TestListSourcesFindsCanonicalIDAliasAndEndpointID(t *testing.T) {
 	}
 }
 
+// A multi-word query matches on AND: every whitespace-separated term has to
+// appear in the source's searchable text. Before this, the whole string was
+// one substring match, so "OFAC SDN" matched nothing even though both words
+// hit — the terms simply never occur adjacent to each other.
+func TestListSourcesMultiWordQueryMatchesOnAND(t *testing.T) {
+	r := realRegistryResolver(t)
+	cases := []struct {
+		q    string
+		want []string
+		why  string
+	}{
+		{"OFAC SDN", []string{"ofac_sdn"}, "两个词分散在 id 与名称里"},
+		{"World Bank", []string{"world_bank", "world_bank_open_data_wdi_wgi"}, "名称本身带空格"},
+		{"stock list", []string{"cninfo", "sse", "szse"}, "三个源都叫这个端点 id"},
+		{"银行 名单", []string{"idb_adb_afdb_eib", "world_bank"}, "中文按子串匹配, 不分词"},
+		{"证券 交易", []string{"cftc", "sse", "sse_notice", "szse"}, "中文多词"},
+		{"sanctions zzzznotarealterm", nil, "AND: 有一个词不命中就整体不命中"},
+	}
+	for _, c := range cases {
+		ids := listedIDs(r.ListSources("", c.q))
+		if len(ids) != len(c.want) {
+			t.Errorf("ListSources(q=%q) = %v, want %v (%s)", c.q, ids, c.want, c.why)
+			continue
+		}
+		got := map[string]bool{}
+		for _, id := range ids {
+			got[id] = true
+		}
+		for _, id := range c.want {
+			if !got[id] {
+				t.Errorf("ListSources(q=%q) = %v, want %v (%s)", c.q, ids, c.want, c.why)
+				break
+			}
+		}
+	}
+}
+
+// Whitespace alone is no filter, the same way an empty family is no filter.
+func TestListSourcesWhitespaceOnlyQueryIsNoFilter(t *testing.T) {
+	r := realRegistryResolver(t)
+	all := listedIDs(r.ListSources("", ""))
+	blank := listedIDs(r.ListSources("", "   "))
+	if len(all) == 0 {
+		t.Fatal("the source list is empty")
+	}
+	if len(blank) != len(all) {
+		t.Errorf("q=\"   \" -> %d sources, q=\"\" -> %d, want the same", len(blank), len(all))
+	}
+}
+
 // The keyword search is case insensitive.
 func TestListSourcesKeywordIsCaseInsensitive(t *testing.T) {
 	r := realRegistryResolver(t)
@@ -1081,5 +1131,73 @@ func TestUpstreamErrorTypeVocabulary(t *testing.T) {
 		if got != c.want {
 			t.Errorf("upstreamErrorType(%q) = %q, want %q", c.msg, got, c.want)
 		}
+	}
+}
+
+// 多词查询按 AND 匹配: 空格分隔的每个词都要出现在源的搜索文本里。
+//
+// 以前是整串子串匹配, 于是 "OFAC SDN"、"银行 名单" 这类查询一个都不命中 ——
+// 明明每个词分别都能命中。这是搜索广度上的一个实打实的缺口: 调用方写下两个
+// 都合理的词, 却拿到空结果。
+func TestListSourcesMultipleTermsMatchWithAnd(t *testing.T) {
+	r := realRegistryResolver(t)
+
+	// 这几组都是**实测**共现的词对(在真实注册表上验过命中数), 不是猜的。
+	for _, c := range []struct{ q, wantID string }{
+		{"sec edgar", "sec_edgar"},
+		{"szse stock", "szse"},
+		{"OFAC SDN", "ofac_sdn"},
+		{"World Bank", "world_bank"},
+		{"stock list", "sse"},
+	} {
+		ids := listedIDs(r.ListSources("", c.q))
+		if len(ids) == 0 {
+			t.Errorf("ListSources(q=%q) is empty —— 多词查询应当按 AND 命中", c.q)
+			continue
+		}
+		if c.wantID != "" {
+			found := false
+			for _, id := range ids {
+				if id == c.wantID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("ListSources(q=%q) = %v, want it to contain %q", c.q, ids, c.wantID)
+			}
+		}
+	}
+}
+
+// AND 语义不能放宽成"包含任意一个词": 那会把真正相关的源挤出扇出上限。
+func TestListSourcesMultipleTermsRequireEveryTerm(t *testing.T) {
+	r := realRegistryResolver(t)
+	// "sanctions" 命中很多源, 但 "zzzznotarealterm" 哪个源都不含 ——
+	// 所以 AND 的结果必须为空。
+	ids := listedIDs(r.ListSources("", "sanctions zzzznotarealterm"))
+	if len(ids) != 0 {
+		t.Errorf("ListSources(q=%q) = %v, want no hits (AND 要求每个词都命中)",
+			"sanctions zzzznotarealterm", ids)
+	}
+}
+
+// 单词查询的行为不能变(这是兼容性底线)。
+func TestListSourcesSingleTermIsUnchanged(t *testing.T) {
+	r := realRegistryResolver(t)
+	for _, q := range []string{"sec_edgar", "edgar", "szse", "stock_list", "sanctions"} {
+		if len(listedIDs(r.ListSources("", q))) == 0 {
+			t.Errorf("ListSources(q=%q) is empty —— 单词查询的行为不能变", q)
+		}
+	}
+}
+
+// 空白字符视作没有筛选(与 family 的空值同义), 而不是"搜一个空格"。
+func TestListSourcesBlankQueryIsNoFilter(t *testing.T) {
+	r := realRegistryResolver(t)
+	blank := len(listedIDs(r.ListSources("", "   ")))
+	all := len(listedIDs(r.ListSources("", "")))
+	if blank != all {
+		t.Errorf("空白 q 命中 %d 个源, 空 q 命中 %d 个 —— 空白应视作没有筛选", blank, all)
 	}
 }

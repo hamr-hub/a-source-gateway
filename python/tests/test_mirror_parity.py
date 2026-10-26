@@ -195,6 +195,17 @@ PROJECTION_CASES: list[dict[str, Any]] = [
         "expected": ([{"total": 42, "x": 1}, {"total": 7}], 42, True),
     },
     {
+        "name": "total_field 是带点的字面键(@odata.count)",
+        # 真实端点: WHO GHO / GHED / ICTRP 的 indicator 端点就是这么声明的。
+        # 键名本身带点, 按 "." 切永远取不到 —— 三个实现都得有整串字面键兜底。
+        "payload": {"value": [{"a": 1}], "@odata.count": 42},
+        "ep": _ep("https://example.org/v1/items",
+                  response={"shape": "object", "item_path": "value",
+                            "total_field": "@odata.count"}),
+        "limit": 0,
+        "expected": ([{"a": 1}], 42, True),
+    },
+    {
         "name": "item_shape=map 按值域投影",
         "payload": {"0": {"a": 1}, "1": {"a": 2}},
         "ep": _ep("https://example.org/v1/items",

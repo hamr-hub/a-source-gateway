@@ -406,3 +406,37 @@ def test_openapi_declares_the_search_request_body(client):
     item = schema["properties"]["queries"]["items"]
     assert item["required"] == ["source"]
     assert set(item["properties"]) == {"source", "endpoint", "params", "limit", "fields"}
+
+
+def test_list_sources_multiple_terms_match_with_and(client):
+    """多词查询按 AND 匹配: 空格分隔的每个词都要出现在源的搜索文本里。
+
+    以前是整串子串匹配, 于是 "OFAC SDN"、"银行 名单" 这类查询一个都不命中 ——
+    明明每个词分别都能命中。调用方写下两个都合理的词, 却拿到空结果。
+    """
+    for q, want in (("sec edgar", "sec_edgar"), ("szse stock", "szse"),
+                    ("OFAC SDN", "ofac_sdn"), ("World Bank", "world_bank"),
+                    ("stock list", "sse")):
+        d = client.get("/v1/sources", params={"q": q}).json()
+        ids = [s["id"] for s in d["data"]]
+        assert d["meta"]["count"] > 0, f"q={q!r} 一个都没命中"
+        assert want in ids, f"q={q!r} 命中 {ids}, 应含 {want}"
+
+
+def test_list_sources_multiple_terms_require_every_term(client):
+    """AND 不能放宽成"包含任意一个词" —— 那会把真正相关的源挤出扇出上限。"""
+    d = client.get("/v1/sources", params={"q": "sanctions zzzznotarealterm"}).json()
+    assert d["meta"]["count"] == 0
+
+
+def test_list_sources_single_term_is_unchanged(client):
+    """单词查询的行为不能变(兼容性底线)。"""
+    for q in ("sec_edgar", "edgar", "szse", "stock_list", "sanctions"):
+        assert client.get("/v1/sources", params={"q": q}).json()["meta"]["count"] > 0, q
+
+
+def test_list_sources_blank_query_is_no_filter(client):
+    """空白字符视作没有筛选(与 family 的空值同义)。"""
+    blank = client.get("/v1/sources", params={"q": "   "}).json()["meta"]["count"]
+    empty = client.get("/v1/sources").json()["meta"]["count"]
+    assert blank == empty

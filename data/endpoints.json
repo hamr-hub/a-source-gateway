@@ -1513,25 +1513,84 @@
     ],
     "US Census International Trade API": [
       {
-        "id": "population",
-        "name": "县人口",
+        "id": "exports_hs",
+        "name": "出口(按 HS 编码 x 国别, 月度)",
         "method": "GET",
-        "url_template": "https://api.census.gov/data/2023/pep/population?get=NAME,POP&for=county:*&key={api_key}",
+        "url_template": "https://api.census.gov/data/timeseries/intltrade/exports/hs?get=E_COMMODITY,E_COMMODITY_SDESC,CTY_CODE,CTY_NAME,ALL_VAL_MO&time={time}&COMM_LVL=HS2&key={api_key}",
         "params": [
           {
             "name": "api_key",
             "in": "query",
             "type": "string",
-            "required": false,
+            "required": true,
             "example": "",
-            "desc": "免费 key;小流量可不带",
+            "desc": "免费注册 key;实测无 key 时 302 跳 /data/missing_key.html, DEMO_KEY 跳 invalid_key(2026-10-26 实测)",
             "env": "A_GATEWAY_CENSUS_API_KEY"
+          },
+          {
+            "name": "time",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "default": "2024-12",
+            "example": "2024-12",
+            "desc": "ISO-8601 年月(YYYY-MM);该数据集为必填谓词"
+          },
+          {
+            "name": "COMM_LVL",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "HS2",
+            "example": "HS2",
+            "desc": "HS 聚合层级: HS2/HS4/HS6/HS10"
           }
         ],
         "response": {
           "media_type": "application/json",
           "shape": "array",
-          "notes": "顶层是数组;不带 key 时返回 Missing Key 页面(非 JSON)"
+          "notes": "顶层是二维数组(首行为表头);变量名/层级取值取自官方 exports/hs/variables.json 与 examples.json(2026-10-26 实测)"
+        },
+        "cache_ttl_s": 86400
+      },
+      {
+        "id": "imports_hs",
+        "name": "进口(按 HS 编码 x 国别, 月度)",
+        "method": "GET",
+        "url_template": "https://api.census.gov/data/timeseries/intltrade/imports/hs?get=I_COMMODITY,I_COMMODITY_SDESC,CTY_CODE,CTY_NAME,GEN_VAL_MO,CON_VAL_MO&time={time}&COMM_LVL=HS2&key={api_key}",
+        "params": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "example": "",
+            "desc": "免费注册 key;实测无 key 时 302 跳 /data/missing_key.html, DEMO_KEY 跳 invalid_key(2026-10-26 实测)",
+            "env": "A_GATEWAY_CENSUS_API_KEY"
+          },
+          {
+            "name": "time",
+            "in": "query",
+            "type": "string",
+            "required": true,
+            "default": "2024-12",
+            "example": "2024-12",
+            "desc": "ISO-8601 年月(YYYY-MM);该数据集为必填谓词"
+          },
+          {
+            "name": "COMM_LVL",
+            "in": "query",
+            "type": "string",
+            "required": false,
+            "default": "HS2",
+            "example": "HS2",
+            "desc": "HS 聚合层级: HS2/HS4/HS6/HS10"
+          }
+        ],
+        "response": {
+          "media_type": "application/json",
+          "shape": "array",
+          "notes": "顶层是二维数组(首行为表头);变量名/层级取值取自官方 imports/hs/variables.json 与 examples.json(2026-10-26 实测);GEN_VAL_MO=一般进口值, CON_VAL_MO=消费进口值"
         },
         "cache_ttl_s": 86400
       }

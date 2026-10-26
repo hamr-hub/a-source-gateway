@@ -259,7 +259,8 @@ python3 scripts/verify_source.py "My Journal API" --direct-only
 - 本次调用**没有降级**(降级的调用不算"验证通过")。
 
 退出码:`0` 已用真实数据验证通过 / `1` 断言失败或调用降级 / `2` **根本连不上上游**
-(这是环境问题,不是源的问题 —— 如实报告,不要伪造)。
+(这是环境问题,不是源的问题 —— 如实报告,不要伪造) / `3` **端点定义是对的,只是本机没配凭据**
+(必填参数全挂在环境变量上而本机没设 —— 配好凭据再跑,不要去改元数据)。
 
 同时它会打印一段**真实的**响应样本和一条可复制的 `curl` 命令。
 
@@ -279,7 +280,30 @@ python3 scripts/verify_source.py "My Journal API" --direct-only
 >
 > 如果退出码是 `1`,**先看断言名**:
 > - `not_degraded` 失败 → 网络/预算问题,元数据可能完全正确,别去改元数据;
+> - `upstream_not_error` 失败且详情提到"配额/限流" → 上游配额耗尽(如 BLS 的
+>   `REQUEST_NOT_PROCESSED`),结构断言会被跳过 —— 元数据没错,换时段或配好 key 再试;
 > - `item_path_resolves_to_list` / `total_field_resolves_to_number` 失败 → 元数据写错了,去改。
+
+#### 批量复验与 `最后验证` 列
+
+`最后验证` 是这条元数据最近一次被**真实请求**核对过的日期。留空比填一个自己没跑过的日期
+诚实 —— 空着运行时会读到 `unverified` 哨兵,而不是某个历史日期。
+
+```bash
+# 复验全部源, 汇总写成 JSON(默认直连上游, 逐源子进程, 单源失败不拖垮整批)
+python3 scripts/verify_source.py --all --json > /tmp/recap.json
+
+# 把这次跑通过的日期写回两份清单的『最后验证』列
+python3 scripts/verify_source.py --write-verified-date --recap-json /tmp/recap.json
+```
+
+写回的规则也就是"哪些才敢改":一个源名下**每一个**被复验过的端点都 `verified` 才落笔;
+`failed` / `degraded` 一律不写。`unreachable`(环境问题)与 `credentials_missing`
+(本机没配凭据)默认同样不写 —— 它们不是核对通过,只是这一次没能核对。确实想把这类
+"至少源是活的"也记下来的场景,显式加 `--allow-partial-date`。
+
+> **注意**:`--all` 对每个源只复验**第一个非 `entry` 端点**。所以多端点源写回的那条日期,
+> 证据覆盖的是那一个端点,不是全部端点 —— 这条允许它是有意的取舍,但别把它读成"整源已核对"。
 
 ### 步骤 7 —— 更新部署
 

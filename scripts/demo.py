@@ -128,7 +128,8 @@ def main(argv: list[str] | None = None) -> int:
 
     params, missing = _verify.collect_params(ep, override)
     if missing:
-        print(f"✗ 端点必填参数缺 example/default: {', '.join(missing)}; 用 --params 补上",
+        print(f"✗ 端点必填参数缺 example/default: {', '.join(_verify.describe_missing(ep, missing))}; "
+              f"用 --params 补上",
               file=sys.stderr)
         return 1
 

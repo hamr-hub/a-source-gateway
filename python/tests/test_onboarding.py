@@ -11,6 +11,7 @@ pytest 收集时不会把 scripts/ 当测试目录, 也不会污染 sys.path。
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import socket
@@ -98,6 +99,10 @@ def fixture_server():
     _Handler.routes = {
         "/works": (200, "application/json", read_fixture("crossref_works.json").encode("utf-8")),
         "/boom": (500, "application/json", b'{"error":"upstream exploded"}'),
+        # 配额耗尽: HTTP 200 但正文明说"没给数据"(BLS 的 REQUEST_NOT_PROCESSED 口径)
+        "/quota": (200, "application/json",
+                   b'{"status":"REQUEST_NOT_PROCESSED",'
+                   b'"message":["daily threshold of 25 requests has been reached"]}'),
     }
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -153,6 +158,34 @@ def make_data_dir(tmp_path: Path, port: int, source_name: str = "Fixture Source"
                 "url_template": f"http://127.0.0.1:{port}/boom",
                 "params": [],
                 "response": {"media_type": "application/json", "shape": "object", "fields": []},
+            }, {
+                # 配额耗尽: HTTP 200 但正文里写着没给数据
+                "id": "quota",
+                "name": "配额耗尽的端点",
+                "method": "GET",
+                "url_template": f"http://127.0.0.1:{port}/quota",
+                "params": [],
+                "response": {
+                    "media_type": "application/json",
+                    "shape": "object",
+                    "item_path": "message.items",
+                    "total_field": "message.total-results",
+                    "fields": [{"name": "DOI", "type": "string"}],
+                },
+                "cache_ttl_s": 900,
+                "budget_ms": 400,
+            }, {
+                # 需要凭据: 必填参数挂在环境变量上
+                "id": "creds",
+                "name": "要凭据的端点",
+                "method": "GET",
+                "url_template": f"http://127.0.0.1:{port}/works",
+                "params": [{"name": "api_key", "in": "query", "type": "string",
+                            "required": True, "env": "A_GATEWAY_TEST_ONLY_KEY",
+                            "desc": "凭据"}],
+                "response": {"media_type": "application/json", "shape": "object", "fields": []},
+                "cache_ttl_s": 900,
+                "budget_ms": 400,
             }],
         },
     }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -583,6 +616,74 @@ def test_verify_detects_wrong_item_path(verify_mod, fixture_server, tmp_path, ca
     assert names["item_path_resolves_to_list"]["ok"] is False
 
 
+def test_verify_quota_exhaustion_is_not_reported_as_metadata_error(verify_mod, fixture_server,
+                                                                  tmp_path, capsys):
+    """HTTP 200 但配额耗尽: 是"上游没给数据", 不是"item_path 写错了"。
+
+    误诊的代价很实在: 照着"item_path 写错"去改一份本来正确的元数据, 改完更糟。
+    """
+    port = fixture_server.server_address[1]
+    data_dir = make_data_dir(tmp_path, port)
+    rc = verify_mod.main([
+        "fixture", "--endpoint", "quota", "--data-dir", str(data_dir),
+        "--gateway-url", f"http://127.0.0.1:{closed_port()}", "--json",
+    ])
+    report = json.loads(capsys.readouterr().out)
+    assert rc == 1                      # 配额耗尽 ≠ 验证通过, 不能放行
+    assert report["upstream"]["status"] == 200
+    names = {a["name"]: a for a in report["assertions"]}
+    # 结构断言被跳过(没数据可比), 而不是判成"路径写错"
+    assert names["item_path_resolves_to_list"]["ok"] is True
+    assert names["item_path_resolves_to_list"]["severity"] == "warn"
+    assert names["total_field_resolves_to_number"]["ok"] is True
+    assert names["total_field_resolves_to_number"]["severity"] == "warn"
+    # 真正的原因要说清楚
+    assert names["upstream_not_error"]["ok"] is False
+    assert "配额" in names["upstream_not_error"]["detail"]
+    assert "REQUEST_NOT_PROCESSED" in names["upstream_not_error"]["detail"]
+
+
+def test_verify_missing_credentials_gets_its_own_status(verify_mod, fixture_server,
+                                                        tmp_path, capsys, monkeypatch):
+    """端点定义是对的, 只是本机没配凭据 —— 不能混进"元数据失真"。
+
+    端点定义写对了的源, 在没配 key 的机器上永远验证不过; 报成 failed 会让人
+    去改一份正确的元数据。退出码 3 单独表示这一类。
+    """
+    monkeypatch.delenv("A_GATEWAY_TEST_ONLY_KEY", raising=False)
+    port = fixture_server.server_address[1]
+    data_dir = make_data_dir(tmp_path, port)
+    rc = verify_mod.main([
+        "fixture", "--endpoint", "creds", "--data-dir", str(data_dir),
+        "--gateway-url", f"http://127.0.0.1:{closed_port()}", "--json",
+    ])
+    report = json.loads(capsys.readouterr().out)
+    assert rc == 3
+    assert report["status"] == "credentials_missing"
+    assert any("api_key" in e for e in report["errors"])
+
+
+def test_verify_resolve_path_falls_back_to_dotted_literal_key(verify_mod):
+    """键名本身带点(@odata.count)时, 整串字面键兜底必须生效。
+
+    两个平面(Python resolver.py / Go parser.go)都有这个兜底, 复验脚本不跟上
+    就会把正确的元数据判成错误。
+    """
+    assert verify_mod.resolve_path({"@odata.count": 42}, "@odata.count") == 42
+    assert verify_mod.resolve_path({"meta": {"total": 7}}, "meta.total") == 7
+    assert verify_mod.resolve_path({"a": {"b": 1}}, "a.b") == 1
+    assert verify_mod.resolve_path({"a": 1}, "x.y") is None
+
+
+def test_verify_quota_detection_does_not_swallow_normal_payloads(verify_mod):
+    """配额判定不能误伤: 正常 status / 非拒绝类状态都不算配额受限。"""
+    assert verify_mod.quota_blocked({"status": "OK", "message": ["ok"]}) == ""
+    assert verify_mod.quota_blocked({"status": "PENDING", "message": ["quota checked"]}) == ""
+    assert verify_mod.quota_blocked({"status": "REQUEST_NOT_PROCESSED",
+                                     "message": ["daily threshold of 25 has been reached"]})
+    assert verify_mod.quota_blocked({"items": []}) == ""
+
+
 # ── demo: 最终交付物 ─────────────────────────────────────────────────────
 def test_demo_prints_curl_and_real_data(demo_mod, fixture_server, tmp_path, capsys):
     port = fixture_server.server_address[1]
@@ -628,3 +729,107 @@ def test_bootstrap_resolves_gateway_package():
     assert len(cands) >= 3
     assert any(c[0].name == "a_source_gateway" for c in cands)
     assert boot.default_data_dir() == root / "data"
+
+
+# ── 复核日期写回 ─────────────────────────────────────────────────────────
+DATE_COLUMN = "最后验证"
+
+
+def write_inventory(path: Path, rows: list[tuple[str, str]]) -> None:
+    """写一份只含 数据源/最后验证 两列的清单(name, verified-at)。"""
+    head = f"数据源,{DATE_COLUMN}"
+    body = "".join(f"{name},{value}" + "\r\n" for name, value in rows)
+    path.write_text(head + "\r\n" + body, encoding="utf-8", newline="")
+
+
+def read_verified(path: Path) -> dict[str, str]:
+    lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    return dict(ln.split(",") for ln in lines[1:])
+
+
+def recap_json(tmp_path: Path, results: list[dict]) -> Path:
+    p = tmp_path / "recap.json"
+    p.write_text(json.dumps({"mode": "all", "results": results}), encoding="utf-8")
+    return p
+
+
+def partial_flag_args(tmp_path: Path, recap: Path, *, allow: bool = False) -> argparse.Namespace:
+    ns = argparse.Namespace(data_dir=str(tmp_path), recap_json=str(recap), date="2026-10-26",
+                            allow_partial_date=allow)
+    return ns
+
+
+def test_write_verified_date_only_touches_fully_verified_sources(verify_mod, tmp_path):
+    """全部端点通过才写日期: 出现 failed 的源必须留着旧值。"""
+    write_inventory(tmp_path / "source_inventory.csv", [
+        ("Green Source", ""), ("Red Source", "2026-01-01"),
+    ])
+    recap = recap_json(tmp_path, [
+        {"source_name": "Green Source", "status": "verified"},
+        {"source_name": "Red Source", "status": "failed"},
+    ])
+    written = verify_mod.write_verified_dates(partial_flag_args(tmp_path, recap))
+
+    assert written == 1
+    got = read_verified(tmp_path / "source_inventory.csv")
+    assert got["Green Source"] == "2026-10-26"
+    assert got["Red Source"] == "2026-01-01"          # 没通过的源不得被刷新
+
+
+def test_write_verified_date_is_idempotent(verify_mod, tmp_path):
+    """重复写同一天不产生新的 diff(否则每次复验都是一片假 diff)。"""
+    write_inventory(tmp_path / "source_inventory.csv", [("Green Source", "2026-10-26")])
+    recap = recap_json(tmp_path, [{"source_name": "Green Source", "status": "verified"}])
+
+    assert verify_mod.write_verified_dates(partial_flag_args(tmp_path, recap)) == 0
+    assert read_verified(tmp_path / "source_inventory.csv")["Green Source"] == "2026-10-26"
+
+
+@pytest.mark.parametrize("status", ["unreachable", "credentials_missing"])
+def test_write_verified_date_blocks_environment_failures(verify_mod, tmp_path, status):
+    """环境问题与缺凭据默认不写: 它们不是"核对通过", 只是这次没能核对。"""
+    write_inventory(tmp_path / "source_inventory.csv", [("Source A", "")])
+    recap = recap_json(tmp_path, [{"source_name": "Source A", "status": status}])
+
+    assert verify_mod.write_verified_dates(partial_flag_args(tmp_path, recap)) == 0
+    assert read_verified(tmp_path / "source_inventory.csv")["Source A"] == ""
+
+    # 显式放行才写 —— 并且这是调用方的选择, 不是默认行为
+    assert verify_mod.write_verified_dates(
+        partial_flag_args(tmp_path, recap, allow=True)) == 1
+    assert read_verified(tmp_path / "source_inventory.csv")["Source A"] == "2026-10-26"
+
+
+def test_write_verified_date_requires_every_endpoint_of_a_source(verify_mod, tmp_path):
+    """多端点源: 只要有一个端点没通过, 整源不写。"""
+    write_inventory(tmp_path / "source_inventory.csv", [("Multi Source", "")])
+    recap = recap_json(tmp_path, [
+        {"source_name": "Multi Source", "status": "verified"},
+        {"source_name": "Multi Source", "status": "failed"},
+    ])
+    assert verify_mod.write_verified_dates(partial_flag_args(tmp_path, recap)) == 0
+    assert read_verified(tmp_path / "source_inventory.csv")["Multi Source"] == ""
+
+
+def test_write_verified_date_covers_both_inventories(verify_mod, tmp_path):
+    """两份清单都要扫: 国内源只在 cn 清单里, 漏扫一份日期就静默消失。"""
+    write_inventory(tmp_path / "source_inventory.csv", [("Overseas Source", "")])
+    write_inventory(tmp_path / "source_inventory_cn.csv", [("中国源", "")])
+    recap = recap_json(tmp_path, [
+        {"source_name": "Overseas Source", "status": "verified"},
+        {"source_name": "中国源", "status": "verified"},
+    ])
+
+    assert verify_mod.write_verified_dates(partial_flag_args(tmp_path, recap)) == 2
+    assert read_verified(tmp_path / "source_inventory.csv")["Overseas Source"] == "2026-10-26"
+    assert read_verified(tmp_path / "source_inventory_cn.csv")["中国源"] == "2026-10-26"
+
+
+def test_write_verified_date_without_recap_writes_nothing(verify_mod, tmp_path):
+    """没给汇总 JSON 就一个字都不写, 并且要说清楚为什么没写。"""
+    write_inventory(tmp_path / "source_inventory.csv", [("Source A", "")])
+    ns = argparse.Namespace(data_dir=str(tmp_path), recap_json="", date="2026-10-26",
+                            allow_partial_date=False)
+
+    assert verify_mod.write_verified_dates(ns) == 0
+    assert read_verified(tmp_path / "source_inventory.csv")["Source A"] == ""
