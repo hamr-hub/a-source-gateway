@@ -768,6 +768,28 @@ func (r *Resolver) scheduleWarm(ep *registry.EndpointSpec, epKey, url, cacheKey 
 	}()
 }
 
+// Search executes one query against many sources in parallel.
+//
+// Each source gets its own budget, so a slow upstream never shortens the
+// budget of the others: the wall clock of the whole search is bounded by the
+// slowest source, not by the sum of all of them.
+//
+// Sources whose endpoint does not exist (or whose name is unknown) are
+// reported per source with an error envelope; they never fail the request.
+func (r *Resolver) Search(reqs []QueryRequest, budgetMS *int) []*envelope.Envelope {
+	out := make([]*envelope.Envelope, len(reqs))
+	var wg sync.WaitGroup
+	for i, req := range reqs {
+		wg.Add(1)
+		go func(i int, req QueryRequest) {
+			defer wg.Done()
+			out[i] = r.Query(req, budgetMS)
+		}(i, req)
+	}
+	wg.Wait()
+	return out
+}
+
 // Prewarm issues one minimal query per source to warm the connection pool
 // and the cache. It never blocks the startup.
 func (r *Resolver) Prewarm() {
@@ -841,7 +863,8 @@ func prewarmParams(ep *registry.EndpointSpec, contact string) *parser.Object {
 			switch {
 			case p.Default != nil:
 				params.Set(p.Name, p.Default)
-			case p.Required && p.Example != nil:
+			// 凭据参数见 Render 里的同一条规则: 环境变量没配时不回落 example。
+			case p.Required && p.Example != nil && p.Env == "":
 				params.Set(p.Name, p.Example)
 			}
 		}
@@ -1063,7 +1086,12 @@ func (r *Resolver) Render(ep *registry.EndpointSpec, req QueryRequest, pageSize 
 		}
 		// 必填参数的兜底: 端点声明的 example 就是"这个端点怎么调"的答案。
 		// 没有它, 调用方按文档那样 params:{} 调不动大多数端点。
-		if _, ok := params.Get(p.Name); !ok && p.Required && p.Example != nil {
+		//
+		// 凭据参数(p.Env != "")不参与这个兜底: 环境变量没配时回落 example
+		// 会把 "YOUR_CENSUS_API_KEY" 这样的占位符真的发给上游, 上游回一个
+		// 200 + "Invalid Key" 的 HTML 页 —— 状态码是 200, 于是调用方看到
+		// 一次"成功的空结果", 而不是"缺凭据"。宁可报缺参数。
+		if _, ok := params.Get(p.Name); !ok && p.Required && p.Example != nil && p.Env == "" {
 			params.Set(p.Name, p.Example)
 		}
 		if (p.Name == "email" || p.Name == "mailto") && isFalsy(paramsValue(params, p.Name)) && r.cfg.Contact != "" {

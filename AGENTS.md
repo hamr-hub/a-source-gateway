@@ -76,8 +76,8 @@
 
 | 清单文件 | 装什么 | 列 | 网关运行时是否加载 |
 |---|---|---|---|
-| `data/source_inventory.csv` | **海外**源(`国别` = 美国/欧盟/英国/全球/多国/…) | 17 列 | ✅ 全量加载 |
-| `data/source_inventory_cn.csv` | **国内**源(`国别` ∈ {中国, 中国大陆, 中华人民共和国}) | 18 列 | ⚠️ 只加载"已接入"的行 |
+| `data/source_inventory.csv` | **海外**源(`国别` = 美国/欧盟/英国/全球/多国/…) | 18 列 | ✅ 全量加载 |
+| `data/source_inventory_cn.csv` | **国内**源(`国别` ∈ {中国, 中国大陆, 中华人民共和国}) | 19 列 | ⚠️ 只加载"已接入"的行 |
 
 **判定方法:只看 `国别` 列。**
 
@@ -90,8 +90,8 @@
 不要靠源名、域名或"这是个新源"来猜归属;也不要因为国内清单还没进运行时,就把国内行
 顺手抄进海外清单。
 
-**国内清单的列契约**:前 17 列与 `data/source_inventory.csv` **列名与列序完全一致**;
-第 18 列 `优先级`(`P0`/`P1`/`P2`)是国内清单**专有**列,P0 = 最高优先接入/维护。
+**国内清单的列契约**:前 18 列与 `data/source_inventory.csv` **列名与列序完全一致**;
+第 19 列 `优先级`(`P0`/`P1`/`P2`)是国内清单**专有**列,P0 = 最高优先接入/维护。
 
 **端点定义里两个与国内源相关的字段**(1.1 起):
 
@@ -329,8 +329,8 @@ a-source-gateway/
 │   ├── mcp_server.py           MCP 适配(优先走 Go 网关,不可达时回落到本地 resolver)
 │   └── cli.py                  命令行入口
 ├── data/                       唯一事实源(改这里,不改代码)
-│   ├── source_inventory.csv    海外源清单(17 列)
-│   ├── source_inventory_cn.csv 国内源清单(18 列 = 17 列契约 + 优先级)
+│   ├── source_inventory.csv    海外源清单(18 列)
+│   ├── source_inventory_cn.csv 国内源清单(19 列 = 18 列契约 + 优先级)
 │   ├── endpoints.json          端点定义
 │   └── aliases.json            源名 → 常用简称
 ├── scripts/                    智能体接入工具链
@@ -379,6 +379,13 @@ curl -s -X POST http://127.0.0.1:8848/v1/query -H 'Content-Type: application/jso
   -d '{"source":"crossref","endpoint":"works","params":{},"limit":3}' | python3 -m json.tool
 ```
 
+**怎么找源**:`q=` 可以是中文关键词、源 id、别名(`szse`)、或端点 id(`stock_list`)——
+命中任意一处即返回。结果里的 `aliases` 告诉你该用哪个简称去调用:
+
+```bash
+curl -s "http://127.0.0.1:8848/v1/sources?q=szse"   # → id=szse, aliases=["szse","szse_stock"]
+```
+
 ---
 
 ## 5. 智能体动手时的边界
@@ -416,6 +423,8 @@ curl -s -X POST http://127.0.0.1:8848/v1/query -H 'Content-Type: application/jso
 |---|---|
 | `validate` 报错 | `docs/adding-a-source.md` §2–§4 的字段约束 |
 | 查询返回 `degraded` | 信封的 `meta.errors[]` 和 `meta.fallback.hint` —— 它们会直接告诉你原因和下一步 |
+| 返回空列表但 `degraded=false` | 先看 `meta.errors` 是不是空的;若是 `upstream_not_json`,说明上游给的是 HTML 错误页而不是数据(改上游可访问性,不是改 `item_path`) |
+| 按简称能调用、却搜不到源 | `GET /v1/sources?q=` 从 1.2 起匹配源 id / 别名 / 端点 id;搜到的结果里带 `aliases` |
 | 403 | 上游要求 UA 带邮箱 → 设 `A_GATEWAY_CONTACT` |
 | 超时 / `budget_exceeded` | 该端点 `budget_ms` 与上游实际延迟;必要时调小 `page_size` |
 | 响应太大 / `response_too_large` | 调小端点的 `page_size`;文件型源应直连上游 |

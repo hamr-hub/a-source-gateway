@@ -194,17 +194,26 @@ async def bench(base: str, rounds: int, out_path: Path, cold_rounds: int = 2,
     q_lat = [r["p95"] for r in results if r["kind"] == "query"]
     worst = max(results, key=lambda r: r["p95"])
     cold_worst = max(cold, key=lambda r: r["ms"]) if cold else {"name": "-", "ms": 0}
+    # 热路径(命中缓存)的 p95 只有零点几毫秒, 拿它当"实时取数延迟"是自欺:
+    # 真实冷启动走的是 cold_path 那组。两个数分开报, 别让缓存把结论抹平。
+    warm_lat = [r["p95"] for r in results
+                if r["kind"] == "query" and r.get("cached", 0) >= r.get("n", 1)]
+    cold_lat = sorted(c["ms"] for c in cold)
+    cold_degraded = sum(1 for c in cold if c["degraded"])
     summary = {
         "budget_ms": BUDGET_MS,
         "rounds": rounds,
         "meta_p95_max_ms": round(max(meta_lat), 1) if meta_lat else None,
         "query_p95_max_ms": round(max(q_lat), 1) if q_lat else None,
         "query_p95_median_ms": round(statistics.median(q_lat), 1) if q_lat else None,
+        "query_warm_p95_max_ms": round(max(warm_lat), 1) if warm_lat else None,
+        "query_cold_p95_ms": round(_pct(cold_lat, 95), 1) if cold_lat else None,
         "worst_case": {"name": worst["name"], "p95": worst["p95"], "max": worst["max"]},
         "cold_path": {
             "worst": {"name": cold_worst["name"], "ms": cold_worst["ms"]},
             "over_budget": [c["name"] for c in cold if c["ms"] > BUDGET_MS],
-            "degraded": sum(1 for c in cold if c["degraded"]),
+            "degraded": cold_degraded,
+            "degraded_ratio": round(cold_degraded / len(cold), 3) if cold else None,
             "cases": cold,
             "n": len(cold),
         },
@@ -230,11 +239,16 @@ def print_summary(summary: dict[str, Any]) -> None:
     qc = [r for r in summary["cases"] if r["kind"] == "query"]
     with_data = sum(1 for r in qc if (r.get("count") or 0) > 0)
     print(f"热路径有数据用例: {with_data}/{len(qc)}")
+    cached_all = sum(1 for r in qc if r.get("cached", 0) >= r.get("n", 1))
+    if cached_all:
+        print(f"注意: {cached_all}/{len(qc)} 个 query 用例全程命中缓存, "
+              f"上表的 p95 是缓存延迟, 不是实时取数延迟")
     cp = summary["cold_path"]
-    print(f"冷路径(每源首调): 最差 {cp['worst']['name']} {cp['worst']['ms']}ms | "
-          f"降级 {cp['degraded']}/{len(cp['cases'])} | 超预算 {cp['over_budget'] or '无'}")
+    print(f"冷路径(每源首调): 最差 {cp['worst']['name']} {cp['worst']['ms']}ms | p95 "
+          f"{summary['query_cold_p95_ms']}ms | 降级 {cp['degraded']}/{len(cp['cases'])}"
+          f" ({cp['degraded_ratio']}) | 超预算 {cp['over_budget'] or '无'}")
     print(f"预算 {summary['budget_ms']}ms | meta p95 最差 {summary['meta_p95_max_ms']}ms | "
-          f"query p95 最差 {summary['query_p95_max_ms']}ms (中位 {summary['query_p95_median_ms']}ms)")
+          f"query 热路径 p95 最差 {summary['query_warm_p95_max_ms']}ms")
     if summary["over_budget_cases"]:
         print(f"超预算用例: {summary['over_budget_cases']}")
     print(f"结论: {'PASS — 冷/热路径全部 ≤ 500ms' if summary['pass'] else 'FAIL'}")

@@ -2,6 +2,54 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] - 2026-10-26
+
+数据源健康度审计(直连实测 112 个端点)后的修复批次。
+
+### 修复
+- **凭据参数不再回落到占位符 example**(Go 与 Python 两平面同步):
+  环境变量没配时, `YOUR_CENSUS_API_KEY` 这类占位符会被真的发给上游,
+  上游回一个 200 + "Invalid Key" 的 HTML 页 —— 状态码是 200, 调用方
+  看到的是一次"成功的空结果"而不是"缺凭据"。现在报 `missing_param`。
+  数据文件里 7 处占位符 example 一并移除。
+- **e-Stat 补上 `env` 声明**:它是唯一没有声明环境变量注入的凭据参数。
+- **SEC EDGAR `companyfacts` 的 `item_path`/`total_field` 移除**:
+  `facts` 是按 taxonomy 分组的对象, 不是列表, 也没有总量字段。
+- **UN 安理会综合名单换址**:`main.un.org` 旧址已返回 202 + 空正文,
+  换成制裁委员会站点的现役地址(实测 200 + application/xml)。
+- **OFAC Consolidated**:PublicationPreview 的导出接口已返回 200 空正文,
+  综合名单换成 treasury.gov downloads 目录的 `cons_advanced.xml`;
+  DTC 部分官方没有可直接下载的 XML, 按规则 2("宁可诚实")移除端点。
+- **`link_checked_at` 不再是硬编码日期**:Go 与 Python 两侧原本都写死
+  "2026-10-22", 于是不管多久没核过对外都宣称那天验证的。现在读清单。
+- **验证脚本的 UA 拼接**:实测 SEC data.sec.gov 拒绝含 github.com 链接的
+  UA(403)。`--contact` 提供邮箱时, UA 改用 `名字 (+邮箱)` 的朴素格式,
+  SEC 系源在直连验证时不再永远不可达。
+
+### 变更
+- **清单新增 `最后验证` 列**(海外第 18 列, 国内插在 `优先级` 之前):
+  这条元数据最近一次被真实请求核对过的日期(ISO);空 = 未核过,
+  空着比填一个自己没跑过的日期诚实。本次实测通过的 42 个源已回填
+  2026-10-26, 其余留空。
+- **下线 Google Patents 端点**:`patents.google.com/xhr/query` 是站内私有
+  接口而非官方开放 API, 违反规则 1(合法性优先于功能)。清单标注改为
+  "已下线", 建议改接 PatentsView / EPO OPS。
+- **移除中国基金业协会的 entry 端点**:它指向官网首页(HTML), 给不出
+  结构化数据;该源退回候选池, 清单标注如实说明。
+- **移除中国证监会的 entry 端点**(保留可用的 `news` JSON 端点)。
+
+### 新增
+- **`validate` 检查占位符 example**:参数 example 匹配 `YOUR_*`/`CHANGEME`
+  之类占位符时报错;有 `env` 的必填参数豁免 example/default 要求。
+- **`verify_source.py --all` 默认直连上游**(可用 `--via-gateway` 走网关):
+  走网关时上游预算只有 400ms, 跨境往返实测 0.4-7.5s, 几乎每个源都
+  "正常地"降级 —— 那是一份网络延迟报告, 不是元数据报告。
+- **验证报告区分"网络慢"与"元数据写错"**:超时导致的降级单独计为
+  `slow`, 不再混进 `failed`(实测 109 源里 103 个 degraded, 81 个只是超时)。
+- **bench 报告冷/热路径分离**:新增 `query_warm_p95_max_ms` 与
+  `query_cold_p95_ms`。热路径 p95 只有零点几毫秒(全是缓存), 拿它当
+  "实时取数延迟"是自欺;终端输出也会明示多少用例全程命中缓存。
+
 ## [1.3.0] - 2026-10-26
 
 ### 新增

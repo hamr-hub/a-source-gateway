@@ -65,7 +65,6 @@
         ],
         "response": {
           "shape": "object",
-          "item_path": "facts",
           "fields": [
             {
               "name": "facts",
@@ -73,8 +72,7 @@
               "desc": "按 us-gaap 分类的全部 XBRL 事实"
             }
           ],
-          "notes": "facts 是按 taxonomy 分类的对象而非数字;总量需自行统计各 us-gaap 项",
-          "total_field": "facts"
+          "notes": "facts 是按 taxonomy(us-gaap/dei/…)分组的对象, 不是列表; 上游也没有总量字段。要取指标须先指定 taxonomy 与具体科目。"
         },
         "cache_ttl_s": 86400
       },
@@ -1573,7 +1571,7 @@
       {
         "id": "consolidated_xml",
         "name": "综合名单 XML",
-        "url_template": "https://main.un.org/securitycouncil/sites/default/files/consolidated.xml",
+        "url_template": "https://scsanctions.un.org/resources/xml/en/consolidated.xml",
         "response": {
           "shape": "xml",
           "media_type": "application/xml",
@@ -2105,48 +2103,6 @@
         "cache_ttl_s": 3600
       }
     ],
-    "Google Patents": [
-      {
-        "id": "search",
-        "name": "专利检索",
-        "method": "GET",
-        "url_template": "https://patents.google.com/xhr/query?url=q%3D{q}&exp=",
-        "params": [
-          {
-            "name": "q",
-            "in": "query",
-            "type": "string",
-            "required": true,
-            "example": "graphene"
-          }
-        ],
-        "response": {
-          "media_type": "application/json",
-          "shape": "object",
-          "item_path": "results.cluster",
-          "total_field": "results.total_num_results",
-          "fields": [
-            {
-              "name": "results.total_num_results",
-              "type": "int",
-              "desc": "命中总数"
-            },
-            {
-              "name": "results.cluster[].patent",
-              "type": "object",
-              "desc": "专利条目"
-            },
-            {
-              "name": "results.cluster[].result",
-              "type": "object",
-              "desc": "标题/摘要片段"
-            }
-          ],
-          "notes": "非官方聚合(基于各局公开数据);q 需 URL 编码"
-        },
-        "cache_ttl_s": 1800
-      }
-    ],
     "IMF IFS / BIS / OECD SDMX": [
       {
         "id": "datamapper",
@@ -2296,9 +2252,9 @@
     "OFAC Consolidated / SSI / DTC 清单": [
       {
         "id": "cons_xml",
-        "name": "综合制裁名单 XML",
+        "name": "综合制裁名单(CONSOLIDATED)",
         "method": "GET",
-        "url_template": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/CONS.XML",
+        "url_template": "https://www.treasury.gov/ofac/downloads/sanctions/1.0/cons_advanced.xml",
         "response": {
           "media_type": "application/xml",
           "shape": "xml",
@@ -2320,33 +2276,9 @@
           "notes": "文件型大响应, 网关会标记 response_too_large 并提示直连"
         },
         "cache_ttl_s": 3600
-      },
-      {
-        "id": "dtc_xml",
-        "name": "DTC 名单 XML",
-        "method": "GET",
-        "url_template": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/DTC.XML",
-        "response": {
-          "media_type": "application/xml",
-          "shape": "xml",
-          "notes": "文件型大响应, 同上"
-        },
-        "cache_ttl_s": 3600
       }
     ],
     "中国证监会 公开信息": [
-      {
-        "id": "entry",
-        "name": "官方入口(通用)",
-        "method": "GET",
-        "url_template": "http://www.csrc.gov.cn/",
-        "response": {
-          "shape": "object",
-          "media_type": "*/*",
-          "fields": [],
-          "notes": "通用透传端点(官方入口直取);结构随官方文件而定, 建议先取该源的专用端点"
-        }
-      },
       {
         "id": "news",
         "name": "证监会要闻",
@@ -2414,20 +2346,6 @@
           "notes": "实测 total=3207 条(证监会要闻栏目);_isJson=true 是返回 JSON 的关键参数"
         },
         "cache_ttl_s": 3600
-      }
-    ],
-    "中国基金业协会 私募公示": [
-      {
-        "id": "entry",
-        "name": "官方入口(通用)",
-        "method": "GET",
-        "url_template": "https://gs.amac.org.cn/",
-        "response": {
-          "shape": "object",
-          "media_type": "*/*",
-          "fields": [],
-          "notes": "通用透传端点(官方入口直取);结构随官方文件而定, 建议先取该源的专用端点"
-        }
       }
     ],
     "BLS 公共数据 API": [
@@ -4887,7 +4805,6 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_EDINET_SUBSCRIPTION_KEY",
             "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖",
             "env": "A_GATEWAY_EDINET_SUBSCRIPTION_KEY"
           },
@@ -4945,7 +4862,6 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_EDINET_SUBSCRIPTION_KEY",
             "desc": "EDINET 官网免费申请的 Subscription-Key,调用时用 params 覆盖",
             "env": "A_GATEWAY_EDINET_SUBSCRIPTION_KEY"
           },
@@ -4977,7 +4893,6 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_DART_API_KEY",
             "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖",
             "env": "A_GATEWAY_DART_API_KEY"
           },
@@ -5035,7 +4950,6 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_DART_API_KEY",
             "desc": "DART 官网免费申请的 인증키,调用时用 params 覆盖",
             "env": "A_GATEWAY_DART_API_KEY"
           },
@@ -5083,8 +4997,8 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_E_STAT_APP_ID",
-            "desc": "e-Stat 官网免费申请的アプリケーションID(appId),调用时用 params 覆盖"
+            "desc": "e-Stat 官网免费申请的アプリケーションID(appId),调用时用 params 覆盖",
+            "env": "A_GATEWAY_E_STAT_APP_ID"
           },
           {
             "name": "stats_code",
@@ -5132,8 +5046,8 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_E_STAT_APP_ID",
-            "desc": "e-Stat 官网免费申请的アプリケーションID,调用时用 params 覆盖"
+            "desc": "e-Stat 官网免费申请的アプリケーションID,调用时用 params 覆盖",
+            "env": "A_GATEWAY_E_STAT_APP_ID"
           },
           {
             "name": "stats_code",
@@ -5171,7 +5085,6 @@
             "in": "query",
             "required": true,
             "type": "string",
-            "example": "YOUR_CENSUS_API_KEY",
             "desc": "api.census.gov 免费申请的 API Key,调用时用 params 覆盖",
             "env": "A_GATEWAY_CENSUS_API_KEY"
           },

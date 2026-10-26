@@ -39,6 +39,11 @@ REQUIRED_COLUMNS = [
     "全量下载", "更新频率", "实测规模", "实测增量", "代理需求", "合规风险", "建议采集方式",
 ]
 
+# 参数 example 里的占位符: 这类值会被渲染进真实请求, 上游回一个 200 的
+# "Invalid Key" 页 —— 状态码是 200, 于是变成一次"成功的空结果"。
+_PLACEHOLDER_EXAMPLE = re.compile(
+    r"^(YOUR_[A-Z0-9_]+|CHANGEME|<[^>]+>|xxx+|PLACEHOLDER|TODO.*)$", re.I)
+
 # scaffold_source.py 生成的占位符标记。出现在数据文件里 = 结论还没补齐, 不能入库。
 TODO_MARK = "TODO("
 
@@ -233,8 +238,16 @@ def cmd_validate(args) -> int:
             elif e["response"].get("shape") not in ("object", "array", "csv", "tsv", "xml", "jsonl", "text"):
                 problems.append(f"{name}/{e.get('id')}: 未知 shape {e['response'].get('shape')!r}")
             for prm in e.get("params", []):
-                if prm.get("required") and not prm.get("example") and "default" not in prm:
-                    problems.append(f"{name}/{e.get('id')}: 必填参数 {prm.get('name')} 没有 example/default")
+                has_value = bool(prm.get("example")) or "default" in prm
+                if prm.get("required") and not has_value and not prm.get("env"):
+                    # 凭据参数(env)豁免: 值只来自环境变量或调用方, 数据文件里
+                    # 不该出现真实 key, 也不该用占位符冒充已配好。
+                    problems.append(f"{name}/{e.get('id')}: 必填参数 {prm.get('name')} 没有 example/default"
+                                    f"(凭据参数请声明 env)")
+                ex = prm.get("example")
+                if isinstance(ex, str) and _PLACEHOLDER_EXAMPLE.match(ex):
+                    problems.append(f"{name}/{e.get('id')}: 参数 {prm.get('name')} 的 example "
+                                    f"是占位符 {ex!r}(会被当成真值发给上游)")
             if "{size}" in e.get("url_template", "") and "size" not in \
                     {p.get("name") for p in e.get("params", [])}:
                 problems.append(f"{name}/{e.get('id')}: url 用了 {{size}} 但没声明 size 参数")

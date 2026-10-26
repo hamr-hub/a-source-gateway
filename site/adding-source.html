@@ -91,7 +91,7 @@
           </thead>
           <tbody>
             <tr><td>源基本信息(<strong>海外</strong> / 全球 / 多国)</td><td><code>data/source_inventory.csv</code> 加一行(17 列)</td></tr>
-            <tr><td>源基本信息(<strong>中国国内</strong>)</td><td><code>data/source_inventory_cn.csv</code> 加一行(18 列)</td></tr>
+            <tr><td>源基本信息(<strong>中国国内</strong>)</td><td><code>data/source_inventory_cn.csv</code> 加一行(19 列)</td></tr>
             <tr><td>端点定义</td><td><code>data/endpoints.json</code> 的 <code>sources</code> 下加键</td></tr>
             <tr><td>常用简称 / 别名</td><td><code>data/aliases.json</code> 的 <code>aliases</code> 对象里加键</td></tr>
           </tbody>
@@ -399,7 +399,7 @@ make gateway-run        # 或本地直接跑 Go 网关
             <tr>
               <td><code>data/source_inventory_cn.csv</code></td>
               <td><strong>国内</strong>源(<code>国别</code> ∈ {中国, 中国大陆, 中华人民共和国})</td>
-              <td>18 列(= 17 列契约 + <code>优先级</code>)</td>
+              <td>19 列(= 18 列契约 + <code>优先级</code>)</td>
               <td>⚠️ 只加载"已接入"的行</td>
             </tr>
           </tbody>

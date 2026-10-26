@@ -31,7 +31,16 @@ const (
 	CCrawl     = "建议采集方式"
 	CLink      = "链接状态"
 	CLinkMS    = "探测耗时ms"
+	// CVerified 是这条元数据最近一次被真实请求核对过的日期(ISO)。
+	// 空着表示"还没核过" —— 留空比填一个自己没跑过的日期诚实。
+	CVerified = "最后验证"
 )
+
+// DefaultCheckedAt 是 最后验证 列为空时的取值。
+//
+// 它是一个明确的哨兵而不是某个历史日期: 以前两边都硬编码 "2026-10-22",
+// 于是不管多久没核过, 对外都宣称是那天验证的。
+const DefaultCheckedAt = "unverified"
 
 // Document level constants of the Python reference.
 const (
@@ -44,6 +53,18 @@ const (
 	GenericEndpointID  = "entry"
 	GenericEndpointNam = "官方入口(通用)"
 )
+
+// verifiedAt reads the "last verified" column of an inventory row.
+//
+// The registry must not claim a verification date it has no evidence for:
+// a source nobody re-checked reports the "unverified" sentinel, which is
+// what the Python reference does as well.
+func verifiedAt(r map[string]string) string {
+	if v := strings.TrimSpace(r[CVerified]); v != "" {
+		return v
+	}
+	return DefaultCheckedAt
+}
 
 // Build assembles the registry from the declarative data files.
 func Build(cfg *config.Config) (*Document, error) {
@@ -156,7 +177,7 @@ func Build(cfg *config.Config) (*Document, error) {
 			Summary:       strings.TrimSpace(r[CContent]),
 			Homepage:      entry,
 			LinkStatus:    strings.TrimSpace(r[CLink]),
-			LinkCheckedAt: GeneratedAt,
+			LinkCheckedAt: verifiedAt(r),
 			Auth: AuthSpec{
 				Type:     authType,
 				Optional: authOpt,

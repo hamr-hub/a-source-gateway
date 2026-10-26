@@ -104,7 +104,7 @@ a-source-gateway/
 │                 ratelimit,envelope,metrics,server}/
 ├── data/                          事实源(四个文件,两平面共享)
 │   ├── source_inventory.csv       海外清单:107 个源 × 17 列
-│   ├── source_inventory_cn.csv    国内清单:34 个源 × 18 列(+优先级),候选池
+│   ├── source_inventory_cn.csv    国内清单:34 个源 × 19 列(+优先级),候选池
 │   ├── endpoints.json             端点定义(56 个源 / 101 条)
 │   └── aliases.json               源名 → 常用简称
 ├── scripts/                       智能体接入工具链(recon/scaffold/verify/demo)

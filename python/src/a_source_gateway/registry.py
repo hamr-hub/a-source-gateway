@@ -51,13 +51,21 @@ C_AUTH, C_LIMITS, C_BULK, C_FREQ = "认证方式", "官方限速口径", "全量
 C_SCALE, C_INCREMENT, C_PROXY = "实测规模", "实测增量", "代理需求"
 C_RISK, C_CRAWL = "合规风险", "建议采集方式"
 C_LINK, C_LINK_MS = "链接状态", "探测耗时ms"
+# 最后验证: 这条元数据最近一次被真实请求核对过的日期(ISO)。
+# 空着表示"还没核过" —— 留空比填一个自己没跑过的日期诚实。
+C_VERIFIED = "最后验证"
 
-# 清单的列契约(两份清单共用同一套 17 列, 国内清单多一列 优先级)
+# 清单的列契约(两份清单共用同一套 18 列, 国内清单多一列 优先级)
 INVENTORY_COLUMNS = [
     C_FAMILY, C_NAME, C_ORG, C_COUNTRY, C_CONTENT, C_ENTRY, C_AUTH, C_LIMITS,
-    C_BULK, C_FREQ, C_SCALE, C_INCREMENT, C_PROXY, C_RISK, C_CRAWL, C_LINK, C_LINK_MS,
+    C_BULK, C_FREQ, C_SCALE, C_INCREMENT, C_PROXY, C_RISK, C_CRAWL, C_LINK,
+    C_LINK_MS, C_VERIFIED,
 ]
 CN_EXTRA_COLUMNS = ["优先级"]
+
+# 清单里 最后验证 列为空时的取值: 表示"这条元数据还没被真实请求核对过"。
+# 它是一个明确的哨兵, 不是某个具体的历史日期 —— 具体日期会让人误以为核过。
+DEFAULT_CHECKED_AT = "unverified"
 CN_PRIORITY_VALUES = ("P0", "P1", "P2")
 
 # 归入"国内清单"的国别取值(规则 3.1:只看国别列分流)。
@@ -444,7 +452,10 @@ def build_registry(cfg: Config | None = None) -> dict[str, Any]:
             summary=(r.get(C_CONTENT) or "").strip(),
             homepage=entry,
             link_status=(r.get(C_LINK) or "").strip(),
-            link_checked_at="2026-10-22",
+            # 以前这里是硬编码的 "2026-10-22", 于是不管多久没核过,
+            # 对外都宣称是那天验证的。现在读清单里的 最后验证 列,
+            # 没核过的源就空着 —— 空着比一个假日期有用。
+            link_checked_at=(r.get(C_VERIFIED) or "").strip() or DEFAULT_CHECKED_AT,
             auth=AuthSpec(type=auth_type, optional=auth_opt, note=auth_txt),
             limits=LimitsSpec(note=(r.get(C_LIMITS) or "").strip()),
             scale=ScaleSpec(total=parse_total(scale_text), unit=parse_unit(scale_text),

@@ -430,8 +430,11 @@ async def test_upstream_error_status_keeps_its_own_error_type():
     await r.shutdown()
 
 
-async def test_xml_and_text_shapes_are_not_flagged_as_degraded():
+async def test_xml_and_text_shapes_are_not_flagged_as_degraded(monkeypatch):
     """xml/text 形状的兜底是约定语义, 不是错误 —— 不能误判成降级。"""
+    # edinet 的 document 端点要 Subscription-Key: 凭据由部署时的环境变量提供。
+    # 不给它一个值, 缺参数会先于形状判定发生, 测的就不是这件事了。
+    monkeypatch.setenv("A_GATEWAY_EDINET_SUBSCRIPTION_KEY", "test-key")
     cases = [("ofac_sdn", "sdn_xml", "<root><a>1</a></root>"),
              ("edinet", "document", "EDINET 原文不是 JSON")]
     for source, endpoint, body in cases:
@@ -439,5 +442,5 @@ async def test_xml_and_text_shapes_are_not_flagged_as_degraded():
         await r.startup()
         env = await r.query(QueryRequest(source=source, endpoint=endpoint, limit=1))
         assert env.meta.degraded is False, f"{source}/{endpoint} 被误判成降级"
-        assert not env.meta.errors
+        assert not env.meta.errors, env.meta.errors
         await r.shutdown()

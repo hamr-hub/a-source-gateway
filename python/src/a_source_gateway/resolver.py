@@ -72,7 +72,7 @@ class UpstreamNotJSONError(Exception):
     """
 
     def __init__(self, preview: str):
-        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页): {preview}")
+        super().__init__(f"上游返回的不是 JSON(疑似 HTML 错误页); 正文片段: {preview}")
         self.preview = preview
 
 
@@ -672,9 +672,13 @@ class Resolver:
                 if env_value:
                     params[name] = env_value
                     continue
+                # 凭据缺失: 不回落到 example(理由见 _render 里的同一条规则)。
+                if p.get("required"):
+                    continue
             if p.get("default") is not None:
                 params[name] = p["default"]
-            elif p.get("required") and p.get("example") is not None:
+            elif (p.get("required") and p.get("example") is not None
+                  and not p.get("env")):
                 params[name] = p["example"]
             if name in ("email", "mailto") and not params.get(name) and self.cfg.contact:
                 params[name] = self.cfg.contact
@@ -695,8 +699,13 @@ class Resolver:
                 params[p["name"]] = p["default"]
             # 必填参数的兜底: 端点声明的 example 就是"这个端点怎么调"的答案。
             # 没有它, 调用方按文档那样 params:{} 调不动大多数端点。
+            #
+            # 凭据参数(p["env"])不参与这个兜底: 环境变量没配时回落 example 会把
+            # "YOUR_CENSUS_API_KEY" 这样的占位符真的发给上游, 上游回一个
+            # 200 + "Invalid Key" 的 HTML 页 —— 状态码是 200, 于是调用方看到
+            # 一次"成功的空结果", 而不是"缺凭据"。宁可报缺参数。
             if (p["name"] not in params and p.get("required")
-                    and p.get("example") is not None):
+                    and p.get("example") is not None and not p.get("env")):
                 params[p["name"]] = p["example"]
             # 端点要邮箱参数(如 OpenAlex 的 mailto)且用户已配置 -> 自动填
             if p["name"] in ("email", "mailto") and not params.get(p["name"]) \

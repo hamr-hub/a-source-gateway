@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -222,7 +223,11 @@ def pick_endpoint(src: dict[str, Any], wanted: str) -> dict[str, Any] | None:
 
 
 def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """必填参数从 example/default 取; 取不到就报出来(不编造)。"""
+    """必填参数从 env/example/default 取; 取不到就报出来(不编造)。
+
+    凭据参数(env)优先从环境变量取 —— 数据文件里不该有真实 key,
+    也不能拿占位符(example="YOUR_XXX")去敲上游。
+    """
     params: dict[str, Any] = {}
     missing: list[str] = []
     for p in ep.get("params", []):
@@ -230,7 +235,15 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
         if not name:
             continue
         if p.get("required"):
-            if p.get("example") is not None:
+            if p.get("env"):
+                env_value = os.environ.get(p["env"], "")
+                if env_value:
+                    params[name] = env_value
+                elif p.get("example") is not None or "default" in p:
+                    missing.append(f"{name}(环境变量 {p['env']} 未设置)")
+                else:
+                    missing.append(name)
+            elif p.get("example") is not None:
                 params[name] = p["example"]
             elif "default" in p:
                 params[name] = p["default"]
@@ -240,6 +253,31 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
             params[name] = p["default"]
     params.update(override or {})
     return params, missing
+
+
+def is_slow(row: dict[str, Any]) -> bool:
+    """这次降级是不是"网络慢"造成的, 而不是元数据写错。
+
+    跨境往返常常是 0.4-7.5s, 网关的上游预算只有 400ms —— 于是调用
+    **正常地**降级。那不是源的问题, 混进 failures 会让报告失去信号。
+    """
+    if row.get("status") != "degraded":
+        return False
+    types: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            t = node.get("type")
+            if isinstance(t, str):
+                types.add(t)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(row)
+    return bool(types & {"timeout", "budget_exceeded", "ConnectError"})
 
 
 def run_all(args: argparse.Namespace) -> int:
@@ -260,6 +298,7 @@ def run_all(args: argparse.Namespace) -> int:
     results: list[dict[str, Any]] = []
     unreachable = 0
     failures = 0
+    slow = 0
     cmd_base = [sys.executable, str(Path(__file__).resolve()), "--json",
                 "--limit", str(args.limit), "--timeout", str(args.timeout),
                 "--resolver-backend", args.resolver_backend]
@@ -290,9 +329,15 @@ def run_all(args: argparse.Namespace) -> int:
         status = row.get("status", "failed")
         if status == "unreachable":
             unreachable += 1
+        elif is_slow(row):
+            # 降级原因是跨境往返慢/预算不够, 不是元数据写错。
+            # 与"真的写错了"混在一起统计, 报告就没有信号了:
+            # 实测 109 源里 103 个 degraded, 其中 81 个只是超时。
+            slow += 1
         elif status != "verified":
             failures += 1
-        print(f"[{i}/{len(ids)}] {sid}: {status}", file=sys.stderr)
+        print(f"[{i}/{len(ids)}] {sid}: {status}"
+              f"{' (网络慢)' if is_slow(row) else ''}", file=sys.stderr)
 
     summary = {
         "mode": "all",
@@ -300,6 +345,7 @@ def run_all(args: argparse.Namespace) -> int:
         "total": len(results),
         "verified": sum(1 for r in results if r.get("status") == "verified"),
         "failed": failures,
+        "slow": slow,
         "unreachable": unreachable,
         "results": results,
     }
@@ -331,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="网关可用时不再单独取一次原文(只按网关信封断言)")
     ap.add_argument("--direct-only", action="store_true",
                     help="不查网关, 直接打上游(只验源本身的元数据, 不验网关链路)")
+    ap.add_argument("--via-gateway", action="store_true",
+                    help="--all 时仍走网关链路(默认直连上游; 走网关会因 400ms 预算大面积降级)")
     args = ap.parse_args(argv)
 
     if args.all:
@@ -339,6 +387,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.json:
             print("✗ --all 只支持 --json 输出", file=sys.stderr)
             return 2
+        # 走网关时上游预算只有 400ms, 而跨境往返实测 0.4-7.5s —— 于是几乎
+        # 每个源都"正常地"降级, 报告变成一份网络延迟报告而不是元数据报告。
+        if not args.via_gateway:
+            args.direct_only = True
         return run_all(args)
     if not args.source:
         ap.error("缺少数据源 id/名称/别名(或用 --all 复验全部)")
@@ -354,7 +406,10 @@ def main(argv: list[str] | None = None) -> int:
     gateway_url = args.gateway_url or DEFAULT_GATEWAY_URL
     ua = DEFAULT_UA
     if args.contact and args.contact not in ua:
-        ua = f"{ua} (mailto:{args.contact})"
+        # 实测: SEC data.sec.gov 拒绝含 github.com 链接的 UA(403),
+        # 认 "名字 (+邮箱)" 这种朴素格式。验证脚本的目的是把上游打通,
+        # UA 就用最不惹事的形式。
+        ua = f"a-source-gateway-verify/1.0 (+{args.contact})"
 
     assertions = Assertions()
     warnings: list[str] = []
@@ -404,12 +459,12 @@ def main(argv: list[str] | None = None) -> int:
     used_params = dict(params)
     if missing_params:
         assertions.add("required_params_available", False, "hard",
-                       f"必填参数缺 example/default: {', '.join(missing_params)};"
-                       f"用 --params 补上")
+                       f"必填参数取不到值: {', '.join(missing_params)};"
+                       f"凭据参数请设对应环境变量或用 --params 补上")
         report = build_report(src, ep, runtime, args, gateway_url, assertions, warnings,
                               errors, status="failed", transport=transport, params=used_params,
                               gateway_call=gateway_call)
-        report["errors"].append(f"必填参数缺 example/default: {', '.join(missing_params)}")
+        report["errors"].append(f"必填参数取不到值: {', '.join(missing_params)}")
         emit(report, args.json)
         return 1
 

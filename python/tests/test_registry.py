@@ -75,8 +75,11 @@ def test_every_endpoint_has_request_and_response_spec(registry):
                 assert p["in"] in ("path", "query", "header", "body")
                 assert p["type"] in ("string", "int", "float", "bool", "string[]")
                 if p.get("required"):
-                    assert p.get("example") is not None or p.get("default") is not None, \
-                        f"{s['id']}/{e['id']} 必填参数 {p['name']} 缺 example/default"
+                    # 凭据参数(env)豁免: 值来自环境变量或调用方, 数据文件里
+                    # 不该出现真实 key, 也不该拿占位符冒充已配好。
+                    assert (p.get("example") is not None or p.get("default") is not None
+                            or p.get("env")), \
+                        f"{s['id']}/{e['id']} 必填参数 {p['name']} 缺 example/default/env"
 
 
 def test_endpoint_defs_keys_exist_in_inventory():

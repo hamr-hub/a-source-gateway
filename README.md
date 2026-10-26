@@ -74,8 +74,11 @@ a-source-gateway serve
 ### 用起来
 
 ```bash
-# 看看有哪些源
+# 看看有哪些源 —— q 可以是中文关键词、源 id、别名("szse")或端点 id("stock_list")
 curl -s "http://127.0.0.1:8848/v1/sources?q=制裁" | python3 -m json.tool | head -30
+
+# 搜到的结果里带 aliases,直接告诉你该用哪个简称去调用
+curl -s "http://127.0.0.1:8848/v1/sources?q=szse" | python3 -m json.tool | head -20
 
 # 看某个端点要传什么参数、返回什么结构
 curl -s http://127.0.0.1:8848/v1/sources/crossref/endpoints/works | python3 -m json.tool
