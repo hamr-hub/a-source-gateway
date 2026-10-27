@@ -103,6 +103,12 @@ def fixture_server():
         "/quota": (200, "application/json",
                    b'{"status":"REQUEST_NOT_PROCESSED",'
                    b'"message":["daily threshold of 25 requests has been reached"]}'),
+        # 同一个"拒绝"状态, 但正文里**带着数据**: 这种不能按配额处理,
+        # 否则真正写错的 item_path 会被"已跳过"藏起来。
+        "/quota_with_data": (200, "application/json",
+                             b'{"status":"REQUEST_NOT_PROCESSED",'
+                             b'"message":["daily threshold of 25 requests has been reached"],'
+                             b'"value":[{"DOI":"10.1051/quota"}],"@odata.count":7}'),
     }
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -170,6 +176,22 @@ def make_data_dir(tmp_path: Path, port: int, source_name: str = "Fixture Source"
                     "shape": "object",
                     "item_path": "message.items",
                     "total_field": "message.total-results",
+                    "fields": [{"name": "DOI", "type": "string"}],
+                },
+                "cache_ttl_s": 900,
+                "budget_ms": 400,
+            }, {
+                # 带着数据的"拒绝"状态: 这种不能按配额处理
+                "id": "quota_with_data",
+                "name": "带数据的配额样式端点",
+                "method": "GET",
+                "url_template": f"http://127.0.0.1:{port}/quota_with_data",
+                "params": [],
+                "response": {
+                    "media_type": "application/json",
+                    "shape": "object",
+                    "item_path": "value",
+                    "total_field": "@odata.count",
                     "fields": [{"name": "DOI", "type": "string"}],
                 },
                 "cache_ttl_s": 900,
@@ -682,6 +704,50 @@ def test_verify_quota_detection_does_not_swallow_normal_payloads(verify_mod):
     assert verify_mod.quota_blocked({"status": "REQUEST_NOT_PROCESSED",
                                      "message": ["daily threshold of 25 has been reached"]})
     assert verify_mod.quota_blocked({"items": []}) == ""
+    # 正文里**有**数据行 → 不是"上游没给数据", 不能按配额处理
+    assert verify_mod.quota_blocked({
+        "status": "REQUEST_NOT_PROCESSED",
+        "message": ["daily threshold of 25 has been reached"],
+        "value": [{"DOI": "10.1/x"}]}) == ""
+
+
+def test_verify_quota_skip_does_not_hide_a_real_metadata_error(verify_mod, fixture_server,
+                                                               tmp_path, capsys):
+    """正文里**有**数据时, 不能按配额跳过结构断言。
+
+    配额限流的表象是"200 + 没给数据"。如果数据其实在, 却按配额处理,
+    真正写错的 item_path 就会被"已跳过"藏起来。
+    """
+    port = fixture_server.server_address[1]
+    data_dir = make_data_dir(tmp_path, port)
+    rc = verify_mod.main([
+        "fixture", "--endpoint", "quota_with_data", "--data-dir", str(data_dir),
+        "--gateway-url", f"http://127.0.0.1:{closed_port()}", "--json",
+    ])
+    report = json.loads(capsys.readouterr().out)
+    # 数据在 → 正常做结构断言(顺带验证带点字面键 @odata.count)
+    assert rc == 0, report["errors"]
+    assert report["status"] == "verified"
+    names = {a["name"]: a for a in report["assertions"]}
+    assert names["item_path_resolves_to_list"]["severity"] == "hard"
+    assert names["total_field_resolves_to_number"]["ok"] is True
+    assert "3102" not in names["total_field_resolves_to_number"]["detail"]
+    assert "7" in names["total_field_resolves_to_number"]["detail"]
+
+    # 把 item_path 改错: 正文里有数据, 就必须如实判"路径写错了", 不能被配额跳过
+    defs = json.loads((data_dir / "endpoints.json").read_text(encoding="utf-8"))
+    for ep in defs["sources"]["Fixture Source"]:
+        if ep["id"] == "quota_with_data":
+            ep["response"]["item_path"] = "value.nope"
+    (data_dir / "endpoints.json").write_text(json.dumps(defs, ensure_ascii=False), encoding="utf-8")
+    rc = verify_mod.main([
+        "fixture", "--endpoint", "quota_with_data", "--data-dir", str(data_dir),
+        "--gateway-url", f"http://127.0.0.1:{closed_port()}", "--json",
+    ])
+    report = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    names = {a["name"]: a for a in report["assertions"]}
+    assert names["item_path_resolves_to_list"]["severity"] == "hard"
 
 
 # ── demo: 最终交付物 ─────────────────────────────────────────────────────

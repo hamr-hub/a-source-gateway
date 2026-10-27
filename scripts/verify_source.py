@@ -178,6 +178,22 @@ class Assertions:
         return not self.hard_failures
 
 
+def _has_data_rows(payload: Any) -> bool:
+    """正文里有没有"数据行"(列表里的字典元素)。
+
+    配额耗尽的响应长这样:
+        {"status": "REQUEST_NOT_PROCESSED", "message": ["...daily threshold..."]}
+    —— 一个数据行都没有。而"数据其实在、只是声明的路径写错了"的正文里,
+    那份数据还留着(列表里的字典元素)。用它把两者分开: 前者是上游的问题,
+    后者是我们自己的元数据问题, 不能混为一谈。
+    """
+    if isinstance(payload, dict):
+        return any(_has_data_rows(v) for v in payload.values())
+    if isinstance(payload, list):
+        return any(isinstance(v, dict) for v in payload)
+    return False
+
+
 def quota_blocked(payload: Any) -> str:
     """识别"HTTP 200 但配额/限流耗尽"的响应。
 
@@ -185,10 +201,11 @@ def quota_blocked(payload: Any) -> str:
     "daily threshold ... has been reached"。把它当成 item_path 写错,
     会让人去改一份本来正确的元数据。返回人话原因, 没问题返回 ""。
 
-    判定要同时满足两条, 否则容易误伤:
+    判定要同时满足三条, 否则容易误伤:
       1. status 像个"拒绝"(ERROR / FAIL / NOT_PROCESSED / LIMIT ...),
          而不是任意一个非 OK 的业务状态;
-      2. message 里确实提到了配额/限流。
+      2. message 里确实提到了配额/限流;
+      3. 正文里一个数据行都没有(上游确实没给数据)。
     """
     if not isinstance(payload, dict):
         return ""
@@ -203,9 +220,11 @@ def quota_blocked(payload: Any) -> str:
     if isinstance(parts, str):
         parts = [parts]
     text = " ".join(str(p) for p in parts)
-    if any(k in text.lower() for k in ("threshold", "quota", "rate limit", "exceeded")):
-        return f"status={status}: {text[:160]}"
-    return ""
+    if not any(k in text.lower() for k in ("threshold", "quota", "rate limit", "exceeded")):
+        return ""
+    if _has_data_rows(payload):
+        return ""
+    return f"status={status}: {text[:160]}"
 
 
 def check_declared_fields(payload: Any, ep: dict, item_path: str | None,
@@ -309,14 +328,29 @@ def collect_params(ep: dict[str, Any], override: dict[str, Any]) -> tuple[dict[s
     return params, missing
 
 
+def _env_by_name(ep: dict[str, Any]) -> dict[str, str]:
+    """参数名 → 它挂着的环境变量名(只有凭据类参数有)。"""
+    return {p.get("name"): p.get("env") for p in ep.get("params", []) if p.get("name")}
+
+
 def describe_missing(ep: dict[str, Any], missing: list[str]) -> list[str]:
     """把缺掉的参数名说成人话: 凭据类的要带上环境变量名。"""
-    env_by_name = {p.get("name"): p.get("env") for p in ep.get("params", []) if p.get("name")}
+    env_by_name = _env_by_name(ep)
     out: list[str] = []
     for name in missing:
         env = env_by_name.get(name)
         out.append(f"{name}(环境变量 {env} 未设置)" if env else name)
     return out
+
+
+def credential_missing(ep: dict[str, Any], missing: list[str]) -> list[str]:
+    """缺掉的参数里, 哪些是"只差凭据"的。
+
+    凭据类 = 挂在环境变量上、而本机没设的必填参数。这类缺失说明端点定义是对的,
+    不该算成"元数据失真"。
+    """
+    env_by_name = _env_by_name(ep)
+    return [name for name in missing if env_by_name.get(name)]
 
 
 def is_slow(row: dict[str, Any]) -> bool:
@@ -623,8 +657,7 @@ def main(argv: list[str] | None = None) -> int:
         # 缺凭据 ≠ 元数据错: 这些源的端点定义是对的, 只是本机没配对应的
         # A_GATEWAY_* 环境变量。混进 failed 会让"元数据失真"这个信号失真。
         missing_detail = describe_missing(ep, missing_params)
-        env_by_name = {p.get("name"): p.get("env") for p in ep.get("params", []) if p.get("name")}
-        missing_env = [n for n in missing_params if env_by_name.get(n)]
+        missing_env = credential_missing(ep, missing_params)
         credential_only = bool(missing_env) and len(missing_env) == len(missing_params)
         assertions.add(
             "required_params_available",
