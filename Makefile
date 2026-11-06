@@ -13,6 +13,20 @@ IMAGE ?= a-source-gateway:local
 URL ?=
 SOURCE ?=
 
+# ── 本地配置(.env)────────────────────────────────────────────────────
+# docker compose 会自动读 .env; 这里也让 make 的各目标读同一份, 免得
+# `make gateway-run` 少了 A_GATEWAY_CONTACT —— 上游(尤其 SEC)会直接 403。
+# .env 已 gitignore; 文件不存在时静默跳过, 不影响任何目标。
+# 用 $(wildcard) 判断存在性再 include: 直接 `-include .env` 在文件缺失时会让
+# make 把 .env 当成一个待构建的目标, 撞上文件末尾那条"未知目标"的兜底规则。
+ifneq (,$(wildcard .env))
+include .env
+endif
+export A_GATEWAY_HOST A_GATEWAY_PORT A_GATEWAY_CONTACT A_GATEWAY_BUDGET_MS \
+       A_GATEWAY_UPSTREAM_BUDGET_MS A_GATEWAY_RESERVE_MS A_GATEWAY_CACHE_ENTRIES \
+       A_GATEWAY_CACHE_BYTES A_GATEWAY_CACHE_TTL_S A_GATEWAY_PREWARM \
+       A_GATEWAY_OFFLINE A_GATEWAY_HTTP2
+
 .PHONY: help install dev test network-test lint type fmt validate bench bench-gateway run build clean \
         gateway-build gateway-test gateway-run \
         docker-build docker-run up down \

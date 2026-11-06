@@ -394,6 +394,10 @@ a-source-gateway/
 | `make docs-check` | 校验文档站(结构 / 内部链接 / 导航齐全) |
 | `make check` | 提交前全量检查 |
 
+`make` 的各目标会自动读仓库根的 `.env`(不存在就跳过),和 `docker compose` 用同一份
+配置。其中 `A_GATEWAY_CONTACT` 必须是**邮箱形状** —— `www.sec.gov` 对只有域名的
+UA 直接 403(见 [`deploy/README.md`](deploy/README.md) 的"上游 403"一节)。
+
 服务起来之后:
 
 ```bash

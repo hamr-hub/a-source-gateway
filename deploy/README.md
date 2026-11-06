@@ -46,6 +46,9 @@ $EDITOR .env          # 至少把 A_GATEWAY_CONTACT 改成真实邮箱
 A_GATEWAY_CONTACT=you@example.com docker compose up -d
 ```
 
+`.env` 不只给 compose 用:仓库根的 `make` 各目标(`make gateway-run` / `make up` / …)
+也读同一份,所以本地跑和 compose 跑不会用出两套配置。文件不存在时静默跳过。
+
 常用变量(全部有默认值):
 
 | 变量 | 默认 | 说明 |
